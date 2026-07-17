@@ -2462,3 +2462,13 @@ aiohttp.client_exceptions.ClientConnectorDNSError: Cannot connect to host gatewa
 [2026-07-17 08:52:27,671] [WARNING] davey is not installed, voice will NOT be supported
 [2026-07-17 08:52:27,686] [ERROR] ❌ Failed to load cogs: Extension 'cogs.utility_mega' raised an error: CommandRegistrationError: The command serverinfo is already an existing command or alias.
 [2026-07-17 08:52:27,686] [ERROR] ❌ Failed to load cogs: Extension 'cogs.utility_mega' raised an error: CommandRegistrationError: The command serverinfo is already an existing command or alias.
+[2026-07-17 08:52:34,706] [WARNING] PyNaCl is not installed, voice will NOT be supported
+[2026-07-17 08:52:34,706] [WARNING] davey is not installed, voice will NOT be supported
+[2026-07-17 08:52:34,792] [INFO] ✅ All cogs loaded successfully
+[2026-07-17 08:52:34,793] [INFO] logging in using static token
+[2026-07-17 08:52:35,857] [INFO] Shard ID None has connected to Gateway (Session ID: 6de4e1aad01334fd16e9dea376b60834).
+[2026-07-17 08:52:37,870] [INFO] ✅ Logged in as VoDevs#1206
+[2026-07-17 08:52:37,870] [INFO] 📊 Serving 1 guilds
+[2026-07-17 08:52:37,871] [INFO] 👥 Watching 9 users
+[2026-07-17 08:52:37,871] [INFO] 👑 Owners: [1516568962966753291]
+[2026-07-17 08:52:38,046] [INFO] ✅ Commands synced to guild: 1526703518818373743
