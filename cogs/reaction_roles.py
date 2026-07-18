@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord.ui import View, Button
 import json
 import os
 
@@ -35,7 +34,6 @@ class ReactionRoles(commands.Cog):
     async def rr_setup(self, ctx, title: str, color: discord.Color = discord.Color.blue(), *, description: str = "React below to get roles!"):
         """[Admin] Creates a new Reaction Role Menu."""
         
-        # Create a simple embed for the menu
         embed = discord.Embed(
             title=title,
             description=description,
@@ -43,17 +41,15 @@ class ReactionRoles(commands.Cog):
         )
         embed.set_footer(text="React to this message to receive roles!")
 
-        # Send the message
         msg = await ctx.send(embed=embed)
         
-        # Save to database
         menu_id = str(msg.id)
         self.data[menu_id] = {
             "channel_id": ctx.channel.id,
             "title": title,
             "description": description,
             "color": color.value,
-            "roles": {} # Format: {"emoji": {"role_id": 123, "description": "..."}}
+            "roles": {} 
         }
         save_data(self.data)
 
@@ -70,30 +66,114 @@ class ReactionRoles(commands.Cog):
         if menu_id not in self.data:
             return await ctx.send("❌ Invalid Menu ID. Please use the ID provided when you ran `!rr-setup`.")
 
-        # Try to get the message
         try:
             channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
             msg = await channel.fetch_message(int(menu_id))
         except:
             return await ctx.send("❌ Could not find the menu message. It might have been deleted.")
 
-        # Add the reaction to the message
         try:
             await msg.add_reaction(emoji)
         except:
             return await ctx.send("❌ Invalid Emoji! Please provide a standard emoji (e.g., ✅, 🔥, or custom server emoji).")
 
-        # Save to database
         self.data[menu_id]["roles"][emoji] = {
             "role_id": role.id,
             "description": description
         }
         save_data(self.data)
 
-        # Update the embed to show the new role
         await self.update_menu_embed(msg, menu_id)
-
         await ctx.send(f"✅ Added {emoji} -> {role.mention} to the menu!", delete_after=10)
+
+    # ============================================
+    # NEW: REMOVE A ROLE/EMOJI FROM THE MENU
+    # ============================================
+    @commands.command(name="rr-remove")
+    @commands.has_permissions(manage_roles=True)
+    async def rr_remove(self, ctx, menu_id: str, emoji: str):
+        """[Admin] Removes an emoji/role pair from the menu."""
+        
+        if menu_id not in self.data:
+            return await ctx.send("❌ Invalid Menu ID.")
+
+        if emoji not in self.data[menu_id]["roles"]:
+            return await ctx.send("❌ That emoji is not on this menu.")
+
+        try:
+            channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
+            msg = await channel.fetch_message(int(menu_id))
+            await msg.clear_reaction(emoji)
+        except:
+            pass # If the message is gone, we just remove it from the database
+
+        # Remove from database
+        del self.data[menu_id]["roles"][emoji]
+        save_data(self.data)
+
+        # Update the embed
+        try:
+            await self.update_menu_embed(msg, menu_id)
+        except:
+            pass
+
+        await ctx.send(f"✅ Removed {emoji} from the menu.", delete_after=10)
+
+    # ============================================
+    # NEW: CHANGE A ROLE'S DESCRIPTION
+    # ============================================
+    @commands.command(name="rr-desc")
+    @commands.has_permissions(manage_roles=True)
+    async def rr_desc(self, ctx, menu_id: str, emoji: str, *, new_description: str):
+        """[Admin] Changes the description of an existing role on the menu."""
+        
+        if menu_id not in self.data:
+            return await ctx.send("❌ Invalid Menu ID.")
+
+        if emoji not in self.data[menu_id]["roles"]:
+            return await ctx.send("❌ That emoji is not on this menu.")
+
+        # Update database
+        self.data[menu_id]["roles"][emoji]["description"] = new_description
+        save_data(self.data)
+
+        # Update the embed
+        try:
+            channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
+            msg = await channel.fetch_message(int(menu_id))
+            await self.update_menu_embed(msg, menu_id)
+        except:
+            pass
+
+        await ctx.send(f"✅ Updated description for {emoji} to: `{new_description}`", delete_after=10)
+
+    # ============================================
+    # NEW: CHANGE A ROLE (Swap the role itself)
+    # ============================================
+    @commands.command(name="rr-role")
+    @commands.has_permissions(manage_roles=True)
+    async def rr_role(self, ctx, menu_id: str, emoji: str, new_role: discord.Role):
+        """[Admin] Swaps the role assigned to an emoji with a new role."""
+        
+        if menu_id not in self.data:
+            return await ctx.send("❌ Invalid Menu ID.")
+
+        if emoji not in self.data[menu_id]["roles"]:
+            return await ctx.send("❌ That emoji is not on this menu.")
+
+        # Update database
+        self.data[menu_id]["roles"][emoji]["role_id"] = new_role.id
+        save_data(self.data)
+
+        # Update the embed
+        try:
+            channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
+            msg = await channel.fetch_message(int(menu_id))
+            await self.update_menu_embed(msg, menu_id)
+        except:
+            pass
+
+        await ctx.send(f"✅ Updated role for {emoji} to {new_role.mention}", delete_after=10)
 
     # ============================================
     # MENU UPDATE HELPER (Refreshes the Embed)
@@ -110,7 +190,7 @@ class ReactionRoles(commands.Cog):
         role_text = ""
         for emoji, role_info in data["roles"].items():
             role = msg.guild.get_role(role_info["role_id"])
-            role_name = role.mention if role else "Deleted Role"
+            role_name = role.mention if role else "**Deleted Role** (Please update!)"
             role_text += f"{emoji} {role_name} — *{role_info['description']}*\n"
         
         if role_text:
@@ -150,7 +230,7 @@ class ReactionRoles(commands.Cog):
                 try:
                     await member.add_roles(role, reason=f"Reaction Role: {emoji_str}")
                 except discord.Forbidden:
-                    pass # Bot doesn't have permissions
+                    pass 
 
     # ============================================
     # EVENT: ON RAW REACTION REMOVE
@@ -181,7 +261,7 @@ class ReactionRoles(commands.Cog):
                 try:
                     await member.remove_roles(role, reason=f"Reaction Role Removed: {emoji_str}")
                 except discord.Forbidden:
-                    pass # Bot doesn't have permissions
+                    pass 
 
 # ============================================
 # SETUP FUNCTION
