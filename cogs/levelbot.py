@@ -24,8 +24,11 @@ class LevelBot(commands.Cog):
         self.bypass_users = set()
         self.bypass_roles = set()
         
-        # Load bypass config
-        self.load_bypass_config()
+        # Level-Up Announcement Channel ID
+        self.level_channel_id = 1526989768595083384  # <--- YOUR CHANNEL ID HERE
+        
+        # Load bypass config & channel config
+        self.load_config()
         
         # Define the level progression (STOPS AT 100)
         self.levels = [2, 5, 10, 20, 35, 50, 60, 70, 100]
@@ -54,8 +57,8 @@ class LevelBot(commands.Cog):
         with open(self.role_data_file, 'w') as f:
             json.dump(self.level_roles, f, indent=4)
             
-    def load_bypass_config(self):
-        """Load cooldown and bypass data from a config file"""
+    def load_config(self):
+        """Load cooldown, bypass, and channel config from a config file"""
         config_file = "level_config.json"
         if os.path.exists(config_file):
             with open(config_file, 'r') as f:
@@ -63,16 +66,18 @@ class LevelBot(commands.Cog):
                 self.COOLDOWN_SECONDS = config.get("cooldown_seconds", 45)
                 self.bypass_users = set(config.get("bypass_users", []))
                 self.bypass_roles = set(config.get("bypass_roles", []))
+                self.level_channel_id = config.get("level_channel_id", 1526989768595083384)
         else:
-            self.save_bypass_config()
+            self.save_config()
             
-    def save_bypass_config(self):
-        """Save cooldown and bypass data to a config file"""
+    def save_config(self):
+        """Save cooldown, bypass, and channel config to a config file"""
         config_file = "level_config.json"
         config = {
             "cooldown_seconds": self.COOLDOWN_SECONDS,
             "bypass_users": list(self.bypass_users),
-            "bypass_roles": list(self.bypass_roles)
+            "bypass_roles": list(self.bypass_roles),
+            "level_channel_id": self.level_channel_id
         }
         with open(config_file, 'w') as f:
             json.dump(config, f, indent=4)
@@ -251,7 +256,7 @@ class LevelBot(commands.Cog):
         await ctx.send(embed=embed)
 
     # ==========================================
-    # NEW ADMIN SETTINGS COMMANDS
+    # ADMIN SETTINGS COMMANDS
     # ==========================================
 
     @commands.command(name="xpslmset")
@@ -265,7 +270,7 @@ class LevelBot(commands.Cog):
             return await ctx.send("❌ Slowmode cannot be negative!")
         
         self.COOLDOWN_SECONDS = seconds
-        self.save_bypass_config()
+        self.save_config()
         
         if seconds == 0:
             await ctx.send(f"✅ XP Slowmode **DISABLED** (0 seconds). Users can gain XP instantly on every message!")
@@ -293,11 +298,11 @@ class LevelBot(commands.Cog):
             
             if user_id in self.bypass_users:
                 self.bypass_users.remove(user_id)
-                self.save_bypass_config()
+                self.save_config()
                 await ctx.send(f"✅ Removed {member.mention} from the XP slowmode bypass list.")
             else:
                 self.bypass_users.add(user_id)
-                self.save_bypass_config()
+                self.save_config()
                 await ctx.send(f"✅ Added {member.mention} to the XP slowmode bypass list! They can now gain XP instantly.")
                 
         elif target_type == "userid":
@@ -310,11 +315,11 @@ class LevelBot(commands.Cog):
                 
                 if user_id in self.bypass_users:
                     self.bypass_users.remove(user_id)
-                    self.save_bypass_config()
+                    self.save_config()
                     await ctx.send(f"✅ Removed User ID `{user_id}` from the XP slowmode bypass list.")
                 else:
                     self.bypass_users.add(user_id)
-                    self.save_bypass_config()
+                    self.save_config()
                     await ctx.send(f"✅ Added User ID `{user_id}` to the XP slowmode bypass list!")
             except ValueError:
                 return await ctx.send("❌ Invalid User ID. Please provide a valid numeric ID.")
@@ -327,11 +332,11 @@ class LevelBot(commands.Cog):
             
             if role_id in self.bypass_roles:
                 self.bypass_roles.remove(role_id)
-                self.save_bypass_config()
+                self.save_config()
                 await ctx.send(f"✅ Removed {role.mention} from the XP slowmode bypass list.")
             else:
                 self.bypass_roles.add(role_id)
-                self.save_bypass_config()
+                self.save_config()
                 await ctx.send(f"✅ Added {role.mention} to the XP slowmode bypass list! All members with this role can now gain XP instantly.")
                 
         else:
@@ -376,6 +381,17 @@ class LevelBot(commands.Cog):
             embed.add_field(name="👥 Bypass Roles", value="None", inline=False)
             
         await ctx.send(embed=embed)
+
+    @commands.command(name="setlevelchannel")
+    @commands.has_permissions(administrator=True)
+    async def set_level_channel(self, ctx, channel: discord.TextChannel):
+        """
+        [Admin] Sets the channel where Level-Up announcements will be sent.
+        Usage: !setlevelchannel #channel
+        """
+        self.level_channel_id = channel.id
+        self.save_config()
+        await ctx.send(f"✅ Level-Up announcements will now be sent to {channel.mention}!")
 
     # ==========================================
     # ADMIN ROLE SETUP COMMANDS
@@ -639,7 +655,7 @@ class LevelBot(commands.Cog):
         await ctx.send(f"✅ Successfully added **{amount} XP** to {member.mention}!\nThey are now at Level {new_level} with {current_xp:,} total XP.")
 
     # ==========================================
-    # XP LISTENER (The Core System)
+    # XP LISTENER (The Core System - Fixed Spam + Channel)
     # ==========================================
 
     @commands.Cog.listener()
@@ -679,43 +695,57 @@ class LevelBot(commands.Cog):
         
         # 4. Calculate XP gained (1-5 per character, randomized)
         xp_gained = self.calculate_xp_gain(message)
-        self.level_data[guild_id][user_id]["xp"] += xp_gained
         
-        # 5. Save data
+        # Get the OLD level BEFORE adding XP
+        old_xp = self.level_data[guild_id][user_id]["xp"]
+        old_level = self.get_level_from_xp(old_xp)
+        
+        # Add the new XP
+        self.level_data[guild_id][user_id]["xp"] += xp_gained
         self.save_data()
         
-        # 6. Check for level up
+        # 5. Check for level up (Compare NEW level to OLD level)
         current_xp = self.level_data[guild_id][user_id]["xp"]
         new_level = self.get_level_from_xp(current_xp)
         
-        # Check if they crossed a milestone level (2, 5, 10, 20, etc.)
-        if new_level in self.levels:
-            # Assign the role
-            guild = message.guild
-            role_name = f"Level {new_level}"
-            role = discord.utils.get(guild.roles, name=role_name)
-            
-            if role:
-                try:
-                    await message.author.add_roles(role)
-                    # Send a level-up message
-                    embed = discord.Embed(
-                        title=f"🎉 Level Up!",
-                        description=f"{message.author.mention} reached **Level {new_level}**!",
-                        color=self.get_role_color(new_level)
-                    )
-                    # Get permissions for display
-                    perms = self.get_role_permissions(new_level)
-                    perm_list = []
-                    if perms.attach_files: perm_list.append("📎 Can send Images/GIFs/Files")
-                    if perms.embed_links: perm_list.append("🔗 Can embed Links")
-                    
-                    if perm_list:
-                        embed.add_field(name="Unlocked Perks", value="\n".join(perm_list), inline=False)
-                    
-                    await message.channel.send(embed=embed)
-                except discord.Forbidden:
-                    pass  # Bot doesn't have perms to add roles
+        # ONLY run if the user actually went up a level
+        if new_level > old_level:
+            # Check if they crossed a milestone level (2, 5, 10, 20, etc.)
+            if new_level in self.levels:
+                # Assign the role
+                guild = message.guild
+                role_name = f"Level {new_level}"
+                role = discord.utils.get(guild.roles, name=role_name)
+                
+                if role:
+                    try:
+                        # Check if they ALREADY have the role. If they do, skip to avoid spam.
+                        if role not in message.author.roles:
+                            await message.author.add_roles(role)
+                            
+                            # Send a level-up message to the SPECIFIC CHANNEL
+                            level_channel = guild.get_channel(self.level_channel_id)
+                            if level_channel is None:
+                                # Fallback to the channel the message was sent in if the set channel is deleted
+                                level_channel = message.channel
+                            
+                            embed = discord.Embed(
+                                title=f"🎉 Level Up!",
+                                description=f"{message.author.mention} reached **Level {new_level}**!",
+                                color=self.get_role_color(new_level)
+                            )
+                            # Get permissions for display
+                            perms = self.get_role_permissions(new_level)
+                            perm_list = []
+                            if perms.attach_files: perm_list.append("📎 Can send Images/GIFs/Files")
+                            if perms.embed_links: perm_list.append("🔗 Can embed Links")
+                            
+                            if perm_list:
+                                embed.add_field(name="Unlocked Perks", value="\n".join(perm_list), inline=False)
+                            
+                            await level_channel.send(embed=embed)
+                    except discord.Forbidden:
+                        pass  # Bot doesn't have perms to add roles
 
 # ==========================================
 # SETUP FUNCTION
