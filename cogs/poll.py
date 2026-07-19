@@ -7,7 +7,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 POLL_DATA_FILE = "polls_data.json"
-GLOBAL_POLL_CHANNEL = 1526730287378075648 # Hardcoded Global Channel
+GLOBAL_POLL_CHANNEL = 1526730287378075648
 
 def load_polls():
     if os.path.exists(POLL_DATA_FILE):
@@ -20,7 +20,7 @@ def save_polls(data):
         json.dump(data, f, indent=4)
 
 # ==========================================
-# MODAL FOR !POLLMENU (POP-UP WINDOW)
+# MODAL FOR !POLLMENU / !GLOBALPOLL
 # ==========================================
 class PollMenuModal(Modal, title="Create Advanced Poll"):
     question = TextInput(label="Poll Question", placeholder="What is your favorite color?", required=True)
@@ -89,8 +89,13 @@ class PollSelectMenu(Select):
 
     async def callback(self, interaction: discord.Interaction):
         polls = load_polls()
-        if self.poll_id not in polls: return await interaction.response.send_message("❌ Poll ended.", ephemeral=True)
+        if self.poll_id not in polls: return await interaction.response.send_message("❌ Poll not found.", ephemeral=True)
         data = polls[self.poll_id]
+        
+        # LOCK CHECK
+        if data.get("ended", False):
+            return await interaction.response.send_message("🔒 This poll has already ended and is locked.", ephemeral=True)
+            
         selected_indices = [int(v) for v in self.values]
         user_id = str(interaction.user.id)
         
@@ -108,46 +113,41 @@ class PollSelectMenu(Select):
         save_polls(polls)
 
 class PollView(View):
-    def __init__(self, poll_id, options, multiple_choice, end_time, is_global):
+    def __init__(self, poll_id, options, multiple_choice, end_time, is_global, message):
         super().__init__(timeout=None)
         self.poll_id = poll_id
         self.end_time = end_time
         self.is_global = is_global
+        self.message = message
         self.add_item(PollSelectMenu(poll_id, options, multiple_choice))
 
-    @discord.ui.button(label="📊 Advanced Results", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="📊 View Results", style=discord.ButtonStyle.secondary)
     async def results_button(self, interaction: discord.Interaction, button: Button):
         polls = load_polls()
         if self.poll_id not in polls: return await interaction.response.send_message("❌ Poll not found.", ephemeral=True)
         data = polls[self.poll_id]
         
-        # Calculate total unique voters
         all_voters = set()
         for voters in data["votes"].values(): all_voters.update(voters)
         total = len(all_voters)
         
-        if total == 0: return await interaction.response.send_message("📊 No votes yet.", ephemeral=True)
+        if total == 0: return await interaction.response.send_message("📊 No votes have been cast yet.", ephemeral=True)
         
-        # === ADVANCED RESULTS GRAPH ===
-        results = []
+        # === CLEAN, MODERN RESULTS EMBED ===
+        embed = discord.Embed(
+            title=f"📊 Live Results: {data['question']}",
+            color=discord.Color.green()
+        )
+        
         for i, opt in enumerate(data["options"]):
             count = len(data["votes"].get(str(i), []))
             percent = (count / total) * 100
-            
-            # Create an actual visual bar graph using Unicode blocks
-            bar_length = 20
-            filled = int(round(percent / 5)) # Every 5% = 1 block
-            bar = "█" * filled + "░" * (bar_length - filled)
-            
-            results.append(f"**{i+1}.** {opt}")
-            results.append(f"`{bar}` **{count}** votes (*{percent:.1f}%*)")
+            embed.add_field(
+                name=f"Option {i+1}: {opt}",
+                value=f"**{count}** votes ({percent:.1f}%)",
+                inline=False
+            )
         
-        # Build Embed
-        embed = discord.Embed(
-            title=f"📊 Poll Results: {data['question']}",
-            description="\n\n".join(results),
-            color=discord.Color.green()
-        )
         embed.set_footer(text=f"Total Voters: {total} | Type: {'Multiple' if data['multiple_choice'] else 'Single'} Choice")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -178,27 +178,61 @@ async def create_poll_logic(interaction, question, options, duration_seconds, p_
     }
     save_polls(polls)
 
-    view = PollView(poll_id, options, p_type == "multiple", end_time, is_global)
-    
     # Determine where to send
+    target_channel = interaction.channel
     if is_global:
-        # Fetch the hardcoded channel
         global_channel = interaction.guild.get_channel(GLOBAL_POLL_CHANNEL)
         if global_channel:
-            await global_channel.send(embed=embed, view=view)
+            target_channel = global_channel
             await interaction.followup.send(f"✅ Global poll successfully sent to {global_channel.mention}!", ephemeral=True)
         else:
-            await interaction.followup.send(f"❌ Could not find Global Channel ID `{GLOBAL_POLL_CHANNEL}`. Sending locally instead.", ephemeral=True)
-            await interaction.followup.send(embed=embed, view=view)
-    else:
-        await interaction.followup.send(embed=embed, view=view)
+            await interaction.followup.send(f"⚠️ Global channel not found. Sending locally.", ephemeral=True)
 
-    # Auto-End after duration
+    # Send the message and save the message object into the view
+    sent_msg = await target_channel.send(embed=embed, view=PollView(poll_id, options, p_type == "multiple", end_time, is_global, None))
+    
+    # Update the view to have the message reference so we can edit it later
+    view = PollView(poll_id, options, p_type == "multiple", end_time, is_global, sent_msg)
+    await sent_msg.edit(view=view)
+
+    # === AUTO-END TIMER ===
     await asyncio.sleep(duration_seconds)
+    
+    # Reload data to ensure it's fresh
     polls = load_polls()
     if poll_id in polls:
-        polls[poll_id]["ended"] = True
+        data = polls[poll_id]
+        data["ended"] = True
         save_polls(polls)
+        
+        # Build Final Results Embed
+        all_voters = set()
+        for voters in data["votes"].values(): all_voters.update(voters)
+        total = len(all_voters)
+        
+        final_embed = discord.Embed(
+            title=f"🔒 Poll Ended: {data['question']}",
+            color=discord.Color.red()
+        )
+        
+        if total == 0:
+            final_embed.description = "❌ No votes were cast."
+        else:
+            for i, opt in enumerate(data["options"]):
+                count = len(data["votes"].get(str(i), []))
+                percent = (count / total) * 100
+                final_embed.add_field(
+                    name=f"Option {i+1}: {opt}",
+                    value=f"**{count}** votes ({percent:.1f}%)",
+                    inline=False
+                )
+            final_embed.set_footer(text=f"Total Voters: {total}")
+        
+        # Edit the original message to remove the dropdown and show results
+        try:
+            await sent_msg.edit(embed=final_embed, view=None) # View=None locks it completely
+        except:
+            pass # If message was deleted, just ignore
 
 # ==========================================
 # MAIN COG
@@ -209,23 +243,15 @@ class Poll(commands.Cog):
     @commands.command(name="pollmenu")
     @commands.has_permissions(manage_messages=True)
     async def poll_menu(self, ctx):
-        """[Admin] Opens a pop-up to create an advanced poll in this channel."""
-        embed = discord.Embed(
-            title="📝 Local Poll Creator",
-            description="Click below to open a pop-up form for a local channel poll.",
-            color=discord.Color.blurple()
-        )
+        """[Admin] Opens a pop-up to create an advanced poll."""
+        embed = discord.Embed(title="📝 Local Poll Creator", description="Click below for a local channel poll.", color=discord.Color.blurple())
         await ctx.send(embed=embed, view=PollMenuTriggerView(ctx, is_global=False))
 
     @commands.command(name="globalpoll")
     @commands.has_permissions(manage_messages=True)
     async def global_poll_menu(self, ctx):
-        """[Admin] Opens a pop-up to create a poll that automatically goes to the global channel."""
-        embed = discord.Embed(
-            title="🌐 Global Poll Creator",
-            description=f"Click below to create a poll that will **automatically be sent** to the global channel (<#{GLOBAL_POLL_CHANNEL}>).",
-            color=discord.Color.gold()
-        )
+        """[Admin] Opens a pop-up to create a poll for the global channel."""
+        embed = discord.Embed(title="🌐 Global Poll Creator", description=f"Click below to create a poll that will automatically be sent to <#{GLOBAL_POLL_CHANNEL}>.", color=discord.Color.gold())
         await ctx.send(embed=embed, view=PollMenuTriggerView(ctx, is_global=True))
 
     @commands.command(name="pollmake")
@@ -252,7 +278,6 @@ class Poll(commands.Cog):
                 self.user = ctx.author
                 self.followup = ctx
         fake_interaction = FakeInteraction(ctx)
-        
         await create_poll_logic(fake_interaction, q, opts, seconds, p_type, is_global=False)
 
 async def setup(bot): await bot.add_cog(Poll(bot))
