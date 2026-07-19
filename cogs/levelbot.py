@@ -430,6 +430,51 @@ class LevelBot(commands.Cog):
         await ctx.send(embed=embed)
 
     # ==========================================
+    # NEW: MANUAL XP ADD COMMAND
+    # ==========================================
+    
+    @commands.command(name="addxp")
+    @commands.has_permissions(administrator=True)
+    async def add_xp(self, ctx, member: discord.Member, amount: int):
+        """
+        [Admin] Manually adds XP to a user.
+        Usage: !addxp @User 500
+        """
+        if amount <= 0:
+            return await ctx.send("❌ You must add a positive amount of XP!")
+
+        guild_id = str(ctx.guild.id)
+        user_id = str(member.id)
+
+        # Initialize data if it doesn't exist
+        if guild_id not in self.level_data:
+            self.level_data[guild_id] = {}
+        if user_id not in self.level_data[guild_id]:
+            self.level_data[guild_id][user_id] = {"xp": 0}
+
+        # Add the XP
+        self.level_data[guild_id][user_id]["xp"] += amount
+        self.save_data()
+
+        # Get new level after adding XP
+        current_xp = self.level_data[guild_id][user_id]["xp"]
+        new_level = self.get_level_from_xp(current_xp)
+
+        # Check if they leveled up from the manual XP and assign role if needed
+        if new_level in self.levels:
+            role_name = f"Level {new_level}"
+            role = discord.utils.get(ctx.guild.roles, name=role_name)
+            if role:
+                try:
+                    await member.add_roles(role)
+                    await ctx.send(f"🎉 {member.mention} received {amount} XP and **Leveled Up to Level {new_level}**! They have been given the {role.mention} role.")
+                except discord.Forbidden:
+                    await ctx.send(f"✅ Added {amount} XP to {member.mention}. They reached Level {new_level}, but I couldn't assign the role (missing permissions).")
+                return
+
+        await ctx.send(f"✅ Successfully added **{amount} XP** to {member.mention}!\nThey are now at Level {new_level} with {current_xp:,} total XP.")
+
+    # ==========================================
     # XP LISTENER (The Core System)
     # ==========================================
 
