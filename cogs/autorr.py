@@ -21,6 +21,13 @@ class AutoRR(commands.Cog):
         if not hasattr(self.bot, 'auto_reactions'):
             self.bot.auto_reactions = []
             
+        # Check if this trigger already exists for this guild
+        for rule in self.bot.auto_reactions:
+            if rule["guild_id"] == ctx.guild.id and rule["trigger_text"] == trigger_text.lower():
+                # Update existing rule instead of adding duplicate
+                rule["emojis"] = [trigger_emoji, add_emoji]
+                return await ctx.send(f"✅ Updated auto-reaction for `{trigger_text}` to {trigger_emoji} and {add_emoji}.", delete_after=10)
+        
         self.bot.auto_reactions.append({
             "guild_id": ctx.guild.id,
             "trigger_text": trigger_text.lower(),
@@ -28,6 +35,58 @@ class AutoRR(commands.Cog):
         })
         
         await ctx.send(f"✅ Auto-Reaction set! When someone says `{trigger_text}`, I'll react with {trigger_emoji} and {add_emoji}.", delete_after=10)
+
+    @commands.command(name="reset")
+    @commands.has_permissions(manage_messages=True)
+    async def reset_auto_reactions(self, ctx):
+        """
+        [Admin] Clears ALL auto-reaction rules for this server.
+        Usage: !reset
+        """
+        if not hasattr(self.bot, 'auto_reactions'):
+            return await ctx.send("❌ No auto-reactions are set up.", delete_after=10)
+        
+        # Filter out rules for this guild
+        initial_count = len([r for r in self.bot.auto_reactions if r["guild_id"] == ctx.guild.id])
+        
+        if initial_count == 0:
+            return await ctx.send("❌ No auto-reactions are set up for this server.", delete_after=10)
+        
+        # Keep only rules from other guilds
+        self.bot.auto_reactions = [r for r in self.bot.auto_reactions if r["guild_id"] != ctx.guild.id]
+        
+        await ctx.send(f"✅ Reset complete! Removed {initial_count} auto-reaction rule(s) for this server.", delete_after=10)
+
+    @commands.command(name="listrr")
+    @commands.has_permissions(manage_messages=True)
+    async def list_auto_reactions(self, ctx):
+        """
+        [Admin] Lists all active auto-reaction rules for this server.
+        Usage: !listrr
+        """
+        if not hasattr(self.bot, 'auto_reactions'):
+            return await ctx.send("❌ No auto-reactions are set up.", delete_after=10)
+        
+        guild_rules = [r for r in self.bot.auto_reactions if r["guild_id"] == ctx.guild.id]
+        
+        if not guild_rules:
+            return await ctx.send("❌ No auto-reactions are set up for this server.", delete_after=10)
+        
+        embed = discord.Embed(
+            title="📋 Auto-Reaction Rules",
+            description="Current auto-reactions set for this server:",
+            color=discord.Color.blue()
+        )
+        
+        for i, rule in enumerate(guild_rules, 1):
+            emojis_str = " ".join(rule["emojis"])
+            embed.add_field(
+                name=f"Rule #{i}",
+                value=f"**Trigger:** `{rule['trigger_text']}`\n**Reactions:** {emojis_str}",
+                inline=False
+            )
+        
+        await ctx.send(embed=embed, delete_after=30)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -42,16 +101,11 @@ class AutoRR(commands.Cog):
                 if rule["trigger_text"] in message.content.lower():
                     for emoji in rule["emojis"]:
                         try:
-                            # Convert string to actual emoji object
-                            # If it's a custom emoji (like <:yes:123456789>), Discord will handle it
-                            # If it's a standard Unicode emoji (like ✅), it will work too
                             await message.add_reaction(emoji)
                         except discord.Forbidden:
                             pass
-                        except discord.HTTPException as e:
-                            # If it fails, try to send a helpful debug message
-                            if e.status == 400:
-                                await message.channel.send(f"⚠️ Couldn't add reaction `{emoji}`. Make sure it's a valid emoji!", delete_after=5)
+                        except discord.HTTPException:
+                            pass
 
 async def setup(bot):
     await bot.add_cog(AutoRR(bot))
