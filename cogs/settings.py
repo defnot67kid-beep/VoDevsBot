@@ -80,7 +80,7 @@ class Settings(commands.Cog):
             # Send the RAW JSON text so they can save it anywhere
             await ctx.send(
                 "📋 **Copy this text below and save it somewhere safe!**\n" +
-                "If you lose all your files, use `!recover` and paste this text back.",
+                "If you lose all your files, use `!recover` and paste this text back (or attach it as a file!).",
                 ephemeral=False
             )
             
@@ -98,23 +98,36 @@ class Settings(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def recover_from_paste(self, ctx, *, json_text: str = None):
         """
-        [Admin] Pastes the JSON text from a !backup command and restores EVERYTHING.
-        Usage: !recover (paste the JSON text right after)
+        [Admin] Pastes the JSON text OR attaches the .txt/.json file from !backup to restore EVERYTHING.
+        Usage: !recover (paste text) OR !recover (attach .txt file)
         """
-        if json_text is None:
-            return await ctx.send("❌ You must paste the JSON text right after the command!\nExample: `!recover {\"timestamp\":...}`")
+        await ctx.send("⏳ Processing recovery data...")
 
-        await ctx.send("⏳ Processing pasted backup data...")
+        # Check if there's a text file attached to the message
+        if ctx.message.attachments:
+            attachment = ctx.message.attachments[0]
+            if attachment.filename.endswith(('.txt', '.json')):
+                try:
+                    # Read the attached file directly
+                    file_content = await attachment.read()
+                    json_text = file_content.decode('utf-8')
+                except Exception as e:
+                    return await ctx.send(f"❌ Failed to read the attached file: {e}")
+            else:
+                return await ctx.send("❌ Please attach a `.txt` or `.json` file from `!backup`.")
+
+        # If no attachment, check if they typed the text in the message
+        elif json_text is None:
+            return await ctx.send("❌ You must either paste the JSON text right after the command, OR attach the `message.txt` file!\nExample: `!recover` (and attach the file)")
 
         try:
             # Remove Markdown code blocks if the user pasted ```json ... ```
             if json_text.startswith("```"):
-                # Strip the triple backticks and the word 'json' if present
                 lines = json_text.split("\n")
                 if lines[0].startswith("```"):
-                    lines = lines[1:]  # Remove first line
+                    lines = lines[1:]
                 if lines[-1].strip() == "```":
-                    lines = lines[:-1]  # Remove last line
+                    lines = lines[:-1]
                 json_text = "\n".join(lines)
 
             # Parse the JSON
