@@ -39,16 +39,19 @@ class AutoRR(commands.Cog):
             
         for rule in self.bot.auto_reactions:
             if rule["guild_id"] == message.guild.id:
-                # Check if the message content contains the trigger text (case insensitive)
                 if rule["trigger_text"] in message.content.lower():
-                    # React to the original message with both emojis
                     for emoji in rule["emojis"]:
                         try:
+                            # Convert string to actual emoji object
+                            # If it's a custom emoji (like <:yes:123456789>), Discord will handle it
+                            # If it's a standard Unicode emoji (like ✅), it will work too
                             await message.add_reaction(emoji)
                         except discord.Forbidden:
-                            pass  # Bot doesn't have permission to react
-                        except discord.HTTPException:
-                            pass  # Invalid emoji or other error
+                            pass
+                        except discord.HTTPException as e:
+                            # If it fails, try to send a helpful debug message
+                            if e.status == 400:
+                                await message.channel.send(f"⚠️ Couldn't add reaction `{emoji}`. Make sure it's a valid emoji!", delete_after=5)
 
 async def setup(bot):
     await bot.add_cog(AutoRR(bot))
