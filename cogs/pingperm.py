@@ -178,3 +178,4 @@ class PingPerm(commands.Cog):
                 if self.is_target_blocked(role.id):
                     await ctx.send(f"❌ You are not allowed to ping {role.mention}. This role has been restricted from receiving pings.", delete_after=5)
                     raise commands.CommandError(f"Ping blocked: {role} is blocked from receiving pings.")
+ 
