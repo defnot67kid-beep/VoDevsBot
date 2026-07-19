@@ -16,17 +16,16 @@ class Settings(commands.Cog):
             "level_data.json",
             "level_roles.json",
             "welcome_data.json",
-            "ticket_data.json",  # If you have ticket data
-            "giveaway_data.json", # If you have giveaway data
-            "economy_data.json",  # If you have economy data
-            # Add any other JSON files your bot uses here!
+            "ticket_data.json",
+            "giveaway_data.json",
+            "economy_data.json",
         ]
 
     @commands.command(name="backup")
     @commands.has_permissions(administrator=True)
     async def backup_settings(self, ctx):
         """
-        [Admin] Saves ALL bot settings/data into one backup file.
+        [Admin] Saves ALL bot settings/data into one backup file AND shows you the raw text.
         Usage: !backup
         """
         await ctx.send("⏳ Creating a full backup of all bot data...")
@@ -56,7 +55,7 @@ class Settings(commands.Cog):
         if found_files == 0:
             return await ctx.send("❌ No existing data files found to backup!")
 
-        # Save the combined backup
+        # Save the combined backup locally
         try:
             with open(self.backup_file, 'w', encoding='utf-8') as f:
                 json.dump(backup_data, f, indent=4)
@@ -68,36 +67,72 @@ class Settings(commands.Cog):
             )
             embed.add_field(name="📁 Files Backed Up", value=str(found_files), inline=True)
             embed.add_field(name="📁 Files Missing/Skipped", value=str(missing_files), inline=True)
-            embed.add_field(name="💾 Backup File", value=f"`{self.backup_file}`", inline=False)
             
-            # Send the backup file as an attachment so you can download it!
-            await ctx.send(embed=embed, file=discord.File(self.backup_file))
+            # Convert backup to a formatted string so they can copy it
+            backup_json_string = json.dumps(backup_data, indent=4)
+            
+            # Send the backup as a file (downloadable) AND as a text block (copy-pasteable)
+            await ctx.send(
+                embed=embed, 
+                file=discord.File(self.backup_file)
+            )
+            
+            # Send the RAW JSON text so they can save it anywhere
+            await ctx.send(
+                "📋 **Copy this text below and save it somewhere safe!**\n" +
+                "If you lose all your files, use `!recover` and paste this text back.",
+                ephemeral=False
+            )
+            
+            # Split into chunks if it's too long for Discord (2000 char limit)
+            if len(backup_json_string) > 1900:
+                for i in range(0, len(backup_json_string), 1900):
+                    await ctx.send(f"```json\n{backup_json_string[i:i+1900]}\n```")
+            else:
+                await ctx.send(f"```json\n{backup_json_string}\n```")
             
         except Exception as e:
             await ctx.send(f"❌ Failed to save backup: {e}")
 
-    @commands.command(name="restore")
+    @commands.command(name="recover")
     @commands.has_permissions(administrator=True)
-    async def restore_backup(self, ctx):
+    async def recover_from_paste(self, ctx, *, json_text: str = None):
         """
-        [Admin] Restores ALL bot settings from the backup file.
-        Usage: !restore
+        [Admin] Pastes the JSON text from a !backup command and restores EVERYTHING.
+        Usage: !recover (paste the JSON text right after)
         """
-        if not os.path.exists(self.backup_file):
-            return await ctx.send("❌ No backup file found! Run `!backup` first.")
+        if json_text is None:
+            return await ctx.send("❌ You must paste the JSON text right after the command!\nExample: `!recover {\"timestamp\":...}`")
 
-        await ctx.send("⏳ Restoring data from backup...")
+        await ctx.send("⏳ Processing pasted backup data...")
 
         try:
-            with open(self.backup_file, 'r', encoding='utf-8') as f:
-                backup_data = json.load(f)
+            # Remove Markdown code blocks if the user pasted ```json ... ```
+            if json_text.startswith("```"):
+                # Strip the triple backticks and the word 'json' if present
+                lines = json_text.split("\n")
+                if lines[0].startswith("```"):
+                    lines = lines[1:]  # Remove first line
+                if lines[-1].strip() == "```":
+                    lines = lines[:-1]  # Remove last line
+                json_text = "\n".join(lines)
+
+            # Parse the JSON
+            backup_data = json.loads(json_text.strip())
+
+            # Validate it has the right structure
+            if "files" not in backup_data:
+                return await ctx.send("❌ Invalid backup format! Make sure you copied the full output from `!backup`.")
 
             restored_count = 0
             failed_count = 0
 
+            # Loop through and write every single file back
             for file_name, content in backup_data["files"].items():
                 try:
-                    # Save the restored data back to its original file
+                    # Ensure the content is valid JSON before writing
+                    json.dumps(content)  # Validate it
+                    
                     with open(file_name, 'w', encoding='utf-8') as f:
                         json.dump(content, f, indent=4)
                     restored_count += 1
@@ -105,19 +140,37 @@ class Settings(commands.Cog):
                     failed_count += 1
                     await ctx.send(f"⚠️ Failed to restore {file_name}: {e}")
 
+            # Also recreate the local bot_backup.json file so !restore works later
+            try:
+                with open(self.backup_file, 'w', encoding='utf-8') as f:
+                    json.dump(backup_data, f, indent=4)
+            except:
+                pass
+
             embed = discord.Embed(
-                title="✅ Backup Restored Successfully!",
+                title="✅ Recovery Complete! Everything is restored!",
                 color=discord.Color.green(),
                 timestamp=datetime.datetime.now()
             )
             embed.add_field(name="✅ Files Restored", value=str(restored_count), inline=True)
             embed.add_field(name="❌ Files Failed", value=str(failed_count), inline=True)
             embed.add_field(name="📅 Backup Timestamp", value=backup_data.get("timestamp", "Unknown"), inline=False)
-            
+            embed.set_footer(text="Restart the bot to fully apply all settings to memory.")
+
             await ctx.send(embed=embed)
 
+            # If AutoRR was restored, remind them to reload it
+            if "level_data.json" in backup_data["files"]:
+                await ctx.send("💡 **Tip:** If you restored Level Data, run `!reload levelbot` to apply it.")
+            if "level_roles.json" in backup_data["files"]:
+                await ctx.send("💡 **Tip:** If you restored Level Roles, run `!reload levelbot` to apply them.")
+            if "welcome_data.json" in backup_data["files"]:
+                await ctx.send("💡 **Tip:** If you restored Welcome Data, run `!reload welcome` to apply it.")
+
+        except json.JSONDecodeError:
+            await ctx.send("❌ **Invalid JSON!** Make sure you copied the entire text from the `!backup` command properly. It must start with `{` and end with `}`.")
         except Exception as e:
-            await ctx.send(f"❌ Failed to restore backup: {e}")
+            await ctx.send(f"❌ Failed to recover backup: {e}")
 
     @commands.command(name="listbackup")
     @commands.has_permissions(administrator=True)
