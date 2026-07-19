@@ -88,6 +88,10 @@ class AutoRR(commands.Cog):
         
         await ctx.send(embed=embed, delete_after=30)
 
+    # ==========================================
+    # OPTIMIZED LISTENER WITH PARALLEL REACTIONS
+    # ==========================================
+
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
@@ -96,16 +100,34 @@ class AutoRR(commands.Cog):
         if not hasattr(self.bot, 'auto_reactions'):
             return
             
+        # Loop through all rules
         for rule in self.bot.auto_reactions:
             if rule["guild_id"] == message.guild.id:
                 if rule["trigger_text"] in message.content.lower():
+                    
+                    # === OPTIMIZATION: PARALLEL REACTION EXECUTION ===
+                    # Instead of awaiting each reaction one-by-one, we create a list of tasks
+                    # and fire them ALL at the exact same time using asyncio.gather()
+                    
+                    tasks = []
                     for emoji in rule["emojis"]:
-                        try:
-                            await message.add_reaction(emoji)
-                        except discord.Forbidden:
-                            pass
-                        except discord.HTTPException:
-                            pass
+                        # Create a task for each reaction
+                        tasks.append(self._safe_add_reaction(message, emoji))
+                    
+                    # Fire all reactions simultaneously in parallel
+                    # This allows the bot to react to 10 messages in the time it used to react to 1
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _safe_add_reaction(self, message, emoji):
+        """
+        Helper method to safely add a reaction without crashing the gather loop.
+        This runs in parallel with other reactions.
+        """
+        try:
+            await message.add_reaction(emoji)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            # Silently ignore permission or rate-limit errors so it doesn't break the batch
+            pass
 
 async def setup(bot):
     await bot.add_cog(AutoRR(bot))
