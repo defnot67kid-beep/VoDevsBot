@@ -14,9 +14,18 @@ class LevelBot(commands.Cog):
         self.level_data = self.load_data()
         self.level_roles = self.load_role_data()
         
-        # Cooldown dictionary to prevent spam (user_id -> last_message_time)
+        # Cooldown dictionary (user_id -> last_message_time)
         self.xp_cooldowns = {}
-        self.COOLDOWN_SECONDS = 45  # Can earn XP every 45 seconds
+        
+        # Default slowmode (45 seconds). Can be changed by admins.
+        self.COOLDOWN_SECONDS = 45
+        
+        # Bypass list (User IDs and Role IDs)
+        self.bypass_users = set()
+        self.bypass_roles = set()
+        
+        # Load bypass config
+        self.load_bypass_config()
         
         # Define the level progression (STOPS AT 100)
         self.levels = [2, 5, 10, 20, 35, 50, 60, 70, 100]
@@ -44,6 +53,29 @@ class LevelBot(commands.Cog):
         """Save level role data to JSON file"""
         with open(self.role_data_file, 'w') as f:
             json.dump(self.level_roles, f, indent=4)
+            
+    def load_bypass_config(self):
+        """Load cooldown and bypass data from a config file"""
+        config_file = "level_config.json"
+        if os.path.exists(config_file):
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                self.COOLDOWN_SECONDS = config.get("cooldown_seconds", 45)
+                self.bypass_users = set(config.get("bypass_users", []))
+                self.bypass_roles = set(config.get("bypass_roles", []))
+        else:
+            self.save_bypass_config()
+            
+    def save_bypass_config(self):
+        """Save cooldown and bypass data to a config file"""
+        config_file = "level_config.json"
+        config = {
+            "cooldown_seconds": self.COOLDOWN_SECONDS,
+            "bypass_users": list(self.bypass_users),
+            "bypass_roles": list(self.bypass_roles)
+        }
+        with open(config_file, 'w') as f:
+            json.dump(config, f, indent=4)
 
     def get_role_color(self, level):
         """Returns a color based on the level"""
@@ -85,23 +117,32 @@ class LevelBot(commands.Cog):
         return perms
 
     # ==========================================
-    # XP CALCULATION (Accurate 1k to 1M Scaling)
+    # XP CALCULATION (1-5 XP per character, randomized)
     # ==========================================
     
     def calculate_xp_gain(self, message):
-        """Calculate XP based on message length. Longer messages = more XP"""
+        """Calculate XP based on message length. 1-5 XP PER CHARACTER."""
         content = message.content
         length = len(content)
         
-        # Base XP for just sending a message
-        base_xp = random.randint(15, 25)
+        if length == 0:
+            return 0
+            
+        # Base XP for just sending a message (small)
+        base_xp = 5
         
-        # Length bonus: 1 extra XP for every 5 characters, capped at 100 extra XP
-        length_bonus = min(length // 5, 100)
+        # 1-5 XP for EVERY single character in the message!
+        total_char_xp = 0
+        for _ in range(length):
+            total_char_xp += random.randint(1, 5)
+            
+        # Total XP gained
+        total_xp = base_xp + total_char_xp
         
-        # Total XP gained (Max ~125 XP per 45 seconds)
-        total_xp = base_xp + length_bonus
-        
+        # Safety cap: Max 1,000 XP per message (stops massive paste exploits)
+        if total_xp > 1000:
+            total_xp = 1000
+            
         return total_xp
 
     def get_xp_needed(self, level):
@@ -210,7 +251,134 @@ class LevelBot(commands.Cog):
         await ctx.send(embed=embed)
 
     # ==========================================
-    # ADMIN SETUP COMMANDS
+    # NEW ADMIN SETTINGS COMMANDS
+    # ==========================================
+
+    @commands.command(name="xpslmset")
+    @commands.has_permissions(administrator=True)
+    async def xp_slowmode_set(self, ctx, seconds: int):
+        """
+        [Admin] Sets the global XP cooldown (slowmode) in seconds.
+        Usage: !xpslmset 30
+        """
+        if seconds < 0:
+            return await ctx.send("❌ Slowmode cannot be negative!")
+        
+        self.COOLDOWN_SECONDS = seconds
+        self.save_bypass_config()
+        
+        if seconds == 0:
+            await ctx.send(f"✅ XP Slowmode **DISABLED** (0 seconds). Users can gain XP instantly on every message!")
+        else:
+            await ctx.send(f"✅ XP Slowmode set to **{seconds}** seconds between XP gains.")
+
+    @commands.command(name="xpslmby")
+    @commands.has_permissions(administrator=True)
+    async def xp_slowmode_bypass(self, ctx, target_type: str, *, target_id: str = None):
+        """
+        [Admin] Bypasses the XP cooldown for a User, UserID, or Role.
+        Usage: 
+            !xpslmby user @User
+            !xpslmby userid 123456789
+            !xpslmby role @Role
+        """
+        guild = ctx.guild
+        target_type = target_type.lower()
+        
+        if target_type == "user":
+            if not ctx.message.mentions:
+                return await ctx.send("❌ Please mention a user: `!xpslmby user @User`")
+            member = ctx.message.mentions[0]
+            user_id = str(member.id)
+            
+            if user_id in self.bypass_users:
+                self.bypass_users.remove(user_id)
+                self.save_bypass_config()
+                await ctx.send(f"✅ Removed {member.mention} from the XP slowmode bypass list.")
+            else:
+                self.bypass_users.add(user_id)
+                self.save_bypass_config()
+                await ctx.send(f"✅ Added {member.mention} to the XP slowmode bypass list! They can now gain XP instantly.")
+                
+        elif target_type == "userid":
+            if not target_id:
+                return await ctx.send("❌ Please provide a user ID: `!xpslmby userid 123456789`")
+            
+            try:
+                user_id_int = int(target_id)
+                user_id = str(user_id_int)
+                
+                if user_id in self.bypass_users:
+                    self.bypass_users.remove(user_id)
+                    self.save_bypass_config()
+                    await ctx.send(f"✅ Removed User ID `{user_id}` from the XP slowmode bypass list.")
+                else:
+                    self.bypass_users.add(user_id)
+                    self.save_bypass_config()
+                    await ctx.send(f"✅ Added User ID `{user_id}` to the XP slowmode bypass list!")
+            except ValueError:
+                return await ctx.send("❌ Invalid User ID. Please provide a valid numeric ID.")
+                
+        elif target_type == "role":
+            if not ctx.message.role_mentions:
+                return await ctx.send("❌ Please mention a role: `!xpslmby role @Role`")
+            role = ctx.message.role_mentions[0]
+            role_id = str(role.id)
+            
+            if role_id in self.bypass_roles:
+                self.bypass_roles.remove(role_id)
+                self.save_bypass_config()
+                await ctx.send(f"✅ Removed {role.mention} from the XP slowmode bypass list.")
+            else:
+                self.bypass_roles.add(role_id)
+                self.save_bypass_config()
+                await ctx.send(f"✅ Added {role.mention} to the XP slowmode bypass list! All members with this role can now gain XP instantly.")
+                
+        else:
+            await ctx.send("❌ Invalid target type! Use: `user`, `userid`, or `role`.")
+
+    @commands.command(name="xpslmlist")
+    @commands.has_permissions(administrator=True)
+    async def xp_slowmode_list(self, ctx):
+        """
+        [Admin] Lists all users and roles that bypass the XP cooldown.
+        Usage: !xpslmlist
+        """
+        embed = discord.Embed(
+            title="⚡ XP Slowmode Bypass List",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(name="⏱️ Current Slowmode", value=f"{self.COOLDOWN_SECONDS} seconds", inline=False)
+        
+        if self.bypass_users:
+            bypass_members = []
+            for user_id in self.bypass_users:
+                member = ctx.guild.get_member(int(user_id))
+                if member:
+                    bypass_members.append(member.mention)
+                else:
+                    bypass_members.append(f"User ID: `{user_id}` (Not in server)")
+            embed.add_field(name="👤 Bypass Users", value="\n".join(bypass_members), inline=False)
+        else:
+            embed.add_field(name="👤 Bypass Users", value="None", inline=False)
+            
+        if self.bypass_roles:
+            bypass_roles = []
+            for role_id in self.bypass_roles:
+                role = ctx.guild.get_role(int(role_id))
+                if role:
+                    bypass_roles.append(role.mention)
+                else:
+                    bypass_roles.append(f"Role ID: `{role_id}` (Deleted)")
+            embed.add_field(name="👥 Bypass Roles", value="\n".join(bypass_roles), inline=False)
+        else:
+            embed.add_field(name="👥 Bypass Roles", value="None", inline=False)
+            
+        await ctx.send(embed=embed)
+
+    # ==========================================
+    # ADMIN ROLE SETUP COMMANDS
     # ==========================================
 
     @commands.command(name="autosetuplevelroles")
@@ -429,10 +597,6 @@ class LevelBot(commands.Cog):
         
         await ctx.send(embed=embed)
 
-    # ==========================================
-    # NEW: MANUAL XP ADD COMMAND
-    # ==========================================
-    
     @commands.command(name="addxp")
     @commands.has_permissions(administrator=True)
     async def add_xp(self, ctx, member: discord.Member, amount: int):
@@ -486,15 +650,26 @@ class LevelBot(commands.Cog):
         guild_id = str(message.guild.id)
         user_id = str(message.author.id)
         
-        # 1. Check cooldown (45 seconds)
-        now = asyncio.get_event_loop().time()
-        if user_id in self.xp_cooldowns:
-            last_time = self.xp_cooldowns[user_id]
-            if now - last_time < self.COOLDOWN_SECONDS:
-                return  # Still on cooldown
+        # 1. Check if user or their role bypasses the cooldown
+        is_bypassed = False
+        if user_id in self.bypass_users:
+            is_bypassed = True
+        else:
+            for role in message.author.roles:
+                if str(role.id) in self.bypass_roles:
+                    is_bypassed = True
+                    break
         
-        # 2. Update cooldown
-        self.xp_cooldowns[user_id] = now
+        # 2. If NOT bypassed, check cooldown
+        if not is_bypassed:
+            now = asyncio.get_event_loop().time()
+            if user_id in self.xp_cooldowns:
+                last_time = self.xp_cooldowns[user_id]
+                if now - last_time < self.COOLDOWN_SECONDS:
+                    return  # Still on cooldown
+            
+            # Update cooldown for non-bypassed users
+            self.xp_cooldowns[user_id] = now
         
         # 3. Initialize user data if not exists
         if guild_id not in self.level_data:
@@ -502,7 +677,7 @@ class LevelBot(commands.Cog):
         if user_id not in self.level_data[guild_id]:
             self.level_data[guild_id][user_id] = {"xp": 0}
         
-        # 4. Calculate XP gained
+        # 4. Calculate XP gained (1-5 per character, randomized)
         xp_gained = self.calculate_xp_gain(message)
         self.level_data[guild_id][user_id]["xp"] += xp_gained
         
