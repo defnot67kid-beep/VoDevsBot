@@ -122,17 +122,16 @@ class LevelBot(commands.Cog):
         return perms
 
     # ==========================================
-    # XP CALCULATION (1-5 XP per character, randomized)
+    # UPDATED XP CALCULATION (Text + File Size)
     # ==========================================
     
     def calculate_xp_gain(self, message):
-        """Calculate XP based on message length. 1-5 XP PER CHARACTER."""
+        """Calculate XP based on text length and attached file sizes."""
+        
+        # 1. XP FROM TEXT (1-5 XP per character, randomized)
         content = message.content
         length = len(content)
         
-        if length == 0:
-            return 0
-            
         # Base XP for just sending a message (small)
         base_xp = 5
         
@@ -141,10 +140,20 @@ class LevelBot(commands.Cog):
         for _ in range(length):
             total_char_xp += random.randint(1, 5)
             
-        # Total XP gained
         total_xp = base_xp + total_char_xp
         
-        # Safety cap: Max 1,000 XP per message (stops massive paste exploits)
+        # 2. XP FROM ATTACHMENTS (0.001 XP per Kilobyte)
+        if message.attachments:
+            for attachment in message.attachments:
+                # Get size in bytes
+                size_bytes = attachment.size
+                # Convert to Kilobytes (KB)
+                size_kb = size_bytes / 1024
+                # Award 0.001 XP per KB
+                file_xp = size_kb * 0.001
+                total_xp += file_xp
+        
+        # Safety cap: Max 1,000 XP per message (stops massive paste/image exploits)
         if total_xp > 1000:
             total_xp = 1000
             
@@ -654,10 +663,6 @@ class LevelBot(commands.Cog):
 
         await ctx.send(f"✅ Successfully added **{amount} XP** to {member.mention}!\nThey are now at Level {new_level} with {current_xp:,} total XP.")
 
-    # ==========================================
-    # NEW COMMAND: REMOVE XP
-    # ==========================================
-    
     @commands.command(name="removexp")
     @commands.has_permissions(administrator=True)
     async def remove_xp(self, ctx, member: discord.Member, amount: int):
@@ -692,7 +697,7 @@ class LevelBot(commands.Cog):
         await ctx.send(f"✅ Successfully removed **{amount} XP** from {member.mention}!\nThey are now at Level {new_level} with {new_xp:,} total XP.")
 
     # ==========================================
-    # XP LISTENER (The Core System - Fixed Spam + Channel)
+    # XP LISTENER (The Core System)
     # ==========================================
 
     @commands.Cog.listener()
@@ -730,7 +735,7 @@ class LevelBot(commands.Cog):
         if user_id not in self.level_data[guild_id]:
             self.level_data[guild_id][user_id] = {"xp": 0}
         
-        # 4. Calculate XP gained (1-5 per character, randomized)
+        # 4. Calculate XP gained (Text + File Size)
         xp_gained = self.calculate_xp_gain(message)
         
         # Get the OLD level BEFORE adding XP
