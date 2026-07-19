@@ -19,7 +19,7 @@ def save_data(data):
         json.dump(data, f, indent=4)
 
 # ============================================
-# REACTION ROLE COG (ADVANCED UI)
+# REACTION ROLE COG
 # ============================================
 class ReactionRoles(commands.Cog):
     def __init__(self, bot):
@@ -27,7 +27,7 @@ class ReactionRoles(commands.Cog):
         self.data = load_data()
 
     # ============================================
-    # ADMIN SETUP COMMAND
+    # ADMIN SETUP COMMAND (Creates the Menu)
     # ============================================
     @commands.command(name="rr-setup")
     @commands.has_permissions(manage_roles=True)
@@ -53,33 +53,29 @@ class ReactionRoles(commands.Cog):
         }
         save_data(self.data)
 
-        await ctx.send(f"✅ Reaction Role Menu created! ID: `{menu_id}`", delete_after=10)
+        await ctx.send(f"✅ Reaction Role Menu created! ID: `{menu_id}`\nUse `{ctx.prefix}rr-add {menu_id} :emoji: @Role <description>` to add roles.", delete_after=15)
 
     # ============================================
-    # ADMIN ADD COMMAND
+    # ADMIN ADD COMMAND (Adds Role+Emoji to Menu)
     # ============================================
     @commands.command(name="rr-add")
     @commands.has_permissions(manage_roles=True)
-    async def rr_add(self, ctx, menu_id: str, emoji: str, role: discord.Role, *, description: str = None):
+    async def rr_add(self, ctx, menu_id: str, emoji: str, role: discord.Role, *, description: str = "No description provided."):
         """[Admin] Adds a role + emoji pair to an existing Reaction Role menu."""
         
         if menu_id not in self.data:
-            return await ctx.send("❌ Invalid Menu ID.")
+            return await ctx.send("❌ Invalid Menu ID. Please use the ID provided when you ran `!rr-setup`.")
 
         try:
             channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
             msg = await channel.fetch_message(int(menu_id))
         except:
-            return await ctx.send("❌ Could not find the menu message.")
+            return await ctx.send("❌ Could not find the menu message. It might have been deleted.")
 
         try:
             await msg.add_reaction(emoji)
         except:
             return await ctx.send("❌ Invalid Emoji! Please provide a standard emoji (e.g., ✅, 🔥, or custom server emoji).")
-
-        # Auto-generate a description if user didn't provide one
-        if description is None:
-            description = f"Grants the {role.name} role."
 
         self.data[menu_id]["roles"][emoji] = {
             "role_id": role.id,
@@ -91,54 +87,96 @@ class ReactionRoles(commands.Cog):
         await ctx.send(f"✅ Added {emoji} -> {role.mention} to the menu!", delete_after=10)
 
     # ============================================
-    # REMOVE / DESC / ROLE COMMANDS
+    # NEW: REMOVE A ROLE/EMOJI FROM THE MENU
     # ============================================
     @commands.command(name="rr-remove")
     @commands.has_permissions(manage_roles=True)
     async def rr_remove(self, ctx, menu_id: str, emoji: str):
-        if menu_id not in self.data: return await ctx.send("❌ Invalid Menu ID.")
-        if emoji not in self.data[menu_id]["roles"]: return await ctx.send("❌ That emoji is not on this menu.")
+        """[Admin] Removes an emoji/role pair from the menu."""
+        
+        if menu_id not in self.data:
+            return await ctx.send("❌ Invalid Menu ID.")
+
+        if emoji not in self.data[menu_id]["roles"]:
+            return await ctx.send("❌ That emoji is not on this menu.")
+
         try:
             channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
             msg = await channel.fetch_message(int(menu_id))
             await msg.clear_reaction(emoji)
-        except: pass
+        except:
+            pass # If the message is gone, we just remove it from the database
+
+        # Remove from database
         del self.data[menu_id]["roles"][emoji]
         save_data(self.data)
-        try: await self.update_menu_embed(msg, menu_id)
-        except: pass
+
+        # Update the embed
+        try:
+            await self.update_menu_embed(msg, menu_id)
+        except:
+            pass
+
         await ctx.send(f"✅ Removed {emoji} from the menu.", delete_after=10)
 
+    # ============================================
+    # NEW: CHANGE A ROLE'S DESCRIPTION
+    # ============================================
     @commands.command(name="rr-desc")
     @commands.has_permissions(manage_roles=True)
     async def rr_desc(self, ctx, menu_id: str, emoji: str, *, new_description: str):
-        if menu_id not in self.data: return await ctx.send("❌ Invalid Menu ID.")
-        if emoji not in self.data[menu_id]["roles"]: return await ctx.send("❌ That emoji is not on this menu.")
+        """[Admin] Changes the description of an existing role on the menu."""
+        
+        if menu_id not in self.data:
+            return await ctx.send("❌ Invalid Menu ID.")
+
+        if emoji not in self.data[menu_id]["roles"]:
+            return await ctx.send("❌ That emoji is not on this menu.")
+
+        # Update database
         self.data[menu_id]["roles"][emoji]["description"] = new_description
         save_data(self.data)
+
+        # Update the embed
         try:
             channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
             msg = await channel.fetch_message(int(menu_id))
             await self.update_menu_embed(msg, menu_id)
-        except: pass
-        await ctx.send(f"✅ Updated description for {emoji}.", delete_after=10)
+        except:
+            pass
 
+        await ctx.send(f"✅ Updated description for {emoji} to: `{new_description}`", delete_after=10)
+
+    # ============================================
+    # NEW: CHANGE A ROLE (Swap the role itself)
+    # ============================================
     @commands.command(name="rr-role")
     @commands.has_permissions(manage_roles=True)
     async def rr_role(self, ctx, menu_id: str, emoji: str, new_role: discord.Role):
-        if menu_id not in self.data: return await ctx.send("❌ Invalid Menu ID.")
-        if emoji not in self.data[menu_id]["roles"]: return await ctx.send("❌ That emoji is not on this menu.")
+        """[Admin] Swaps the role assigned to an emoji with a new role."""
+        
+        if menu_id not in self.data:
+            return await ctx.send("❌ Invalid Menu ID.")
+
+        if emoji not in self.data[menu_id]["roles"]:
+            return await ctx.send("❌ That emoji is not on this menu.")
+
+        # Update database
         self.data[menu_id]["roles"][emoji]["role_id"] = new_role.id
         save_data(self.data)
+
+        # Update the embed
         try:
             channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
             msg = await channel.fetch_message(int(menu_id))
             await self.update_menu_embed(msg, menu_id)
-        except: pass
+        except:
+            pass
+
         await ctx.send(f"✅ Updated role for {emoji} to {new_role.mention}", delete_after=10)
 
     # ============================================
-    # ADVANCED UI HELPER (The Cleaner Layout)
+    # MENU UPDATE HELPER (Refreshes the Embed)
     # ============================================
     async def update_menu_embed(self, msg: discord.Message, menu_id: str):
         data = self.data[menu_id]
@@ -149,68 +187,81 @@ class ReactionRoles(commands.Cog):
             color=discord.Color(data["color"])
         )
         
-        # Sort roles alphabetically by role name
-        sorted_items = sorted(data["roles"].items(), key=lambda x: msg.guild.get_role(x[1]["role_id"]).name if msg.guild.get_role(x[1]["role_id"]) else "ZZZ")
-
-        # If there are 3 or fewer roles, make them their own dedicated fields (Looks larger and cleaner)
-        if len(sorted_items) <= 3:
-            for emoji, role_info in sorted_items:
-                role = msg.guild.get_role(role_info["role_id"])
-                role_name = role.mention if role else "**Deleted Role**"
-                embed.add_field(
-                    name=f"{emoji} {role_name}",
-                    value=f"*{role_info['description']}*",
-                    inline=False
-                )
+        role_text = ""
+        for emoji, role_info in data["roles"].items():
+            role = msg.guild.get_role(role_info["role_id"])
+            role_name = role.mention if role else "**Deleted Role** (Please update!)"
+            role_text += f"{emoji} {role_name} — *{role_info['description']}*\n"
+        
+        if role_text:
+            embed.add_field(name="Available Roles", value=role_text, inline=False)
         else:
-            # If there are more than 3 roles, split them into two clean columns
-            field_value = ""
-            for emoji, role_info in sorted_items:
-                role = msg.guild.get_role(role_info["role_id"])
-                role_name = role.mention if role else "**Deleted Role**"
-                field_value += f"{emoji} {role_name} — *{role_info['description']}*\n"
+            embed.add_field(name="Available Roles", value="No roles added yet. Use `!rr-add` to add them!", inline=False)
             
-            embed.add_field(name="Available Roles", value=field_value, inline=False)
-
         embed.set_footer(text="React to this message to receive roles!")
         await msg.edit(embed=embed)
 
     # ============================================
-    # REACTION EVENT LISTENERS
+    # EVENT: ON RAW REACTION ADD
     # ============================================
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        if payload.user_id == self.bot.user.id: return
+        if payload.user_id == self.bot.user.id:
+            return
+
         menu_id = str(payload.message_id)
-        if menu_id not in self.data: return
+        if menu_id not in self.data:
+            return
+
         guild = self.bot.get_guild(payload.guild_id)
-        if not guild: return
+        if not guild:
+            return
+
         member = guild.get_member(payload.user_id)
-        if not member: return
+        if not member:
+            return
+
         emoji_str = str(payload.emoji)
         if emoji_str in self.data[menu_id]["roles"]:
             role_id = self.data[menu_id]["roles"][emoji_str]["role_id"]
             role = guild.get_role(role_id)
+            
             if role and role not in member.roles:
-                try: await member.add_roles(role, reason=f"Reaction Role: {emoji_str}")
-                except: pass
+                try:
+                    await member.add_roles(role, reason=f"Reaction Role: {emoji_str}")
+                except discord.Forbidden:
+                    pass 
 
+    # ============================================
+    # EVENT: ON RAW REACTION REMOVE
+    # ============================================
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
-        if payload.user_id == self.bot.user.id: return
+        if payload.user_id == self.bot.user.id:
+            return
+
         menu_id = str(payload.message_id)
-        if menu_id not in self.data: return
+        if menu_id not in self.data:
+            return
+
         guild = self.bot.get_guild(payload.guild_id)
-        if not guild: return
+        if not guild:
+            return
+
         member = guild.get_member(payload.user_id)
-        if not member: return
+        if not member:
+            return
+
         emoji_str = str(payload.emoji)
         if emoji_str in self.data[menu_id]["roles"]:
             role_id = self.data[menu_id]["roles"][emoji_str]["role_id"]
             role = guild.get_role(role_id)
+            
             if role and role in member.roles:
-                try: await member.remove_roles(role, reason=f"Reaction Role Removed: {emoji_str}")
-                except: pass
+                try:
+                    await member.remove_roles(role, reason=f"Reaction Role Removed: {emoji_str}")
+                except discord.Forbidden:
+                    pass 
 
 # ============================================
 # SETUP FUNCTION
