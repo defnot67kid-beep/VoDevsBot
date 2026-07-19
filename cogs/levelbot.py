@@ -78,10 +78,7 @@ class LevelBot(commands.Cog):
         for member in guild.members:
             if member.bot:
                 continue
-            # Estimate level based on a simple XP system or use a custom method
-            # For now, we'll assign based on join position or random assignment for demo
-            # In a real bot, you'd use your XP system here
-            member_level = self.get_member_level(member)  # You need to implement this
+            member_level = self.get_member_level(member)
             if member_level:
                 role_id = self.level_roles[str(guild.id)].get(str(member_level))
                 if role_id:
@@ -106,54 +103,76 @@ class LevelBot(commands.Cog):
         
         await ctx.send(embed=embed)
 
+    @commands.command(name="removealllevelroles")
+    @commands.has_permissions(administrator=True)
+    async def remove_all_level_roles(self, ctx):
+        """
+        [Admin] Deletes ALL level role objects from the server.
+        Usage: !removealllevelroles
+        """
+        guild = ctx.guild
+        
+        if str(guild.id) not in self.level_roles or not self.level_roles[str(guild.id)]:
+            return await ctx.send("❌ No level roles configured for this server.")
+        
+        deleted_count = 0
+        failed_count = 0
+        deleted_roles = []
+        
+        for level, role_id in self.level_roles[str(guild.id)].items():
+            role = guild.get_role(role_id)
+            if role:
+                try:
+                    await role.delete(reason="Removed all level roles by admin request")
+                    deleted_count += 1
+                    deleted_roles.append(role.name)
+                except discord.Forbidden:
+                    failed_count += 1
+                except discord.HTTPException:
+                    failed_count += 1
+        
+        # Clear from database
+        del self.level_roles[str(guild.id)]
+        self.save_data()
+        
+        embed = discord.Embed(
+            title="🗑️ Level Roles Removed",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="✅ Successfully Deleted", value=str(deleted_count), inline=True)
+        embed.add_field(name="❌ Failed to Delete", value=str(failed_count), inline=True)
+        
+        if deleted_roles:
+            embed.add_field(name="Deleted Roles", value=", ".join(deleted_roles[:10]), inline=False)
+        
+        await ctx.send(embed=embed)
+
     @commands.command(name="autodeletelevelroles")
     @commands.has_permissions(administrator=True)
     async def auto_delete_level_roles(self, ctx, target=None, *, user_id=None):
         """
-        [Admin] Deletes level roles.
-        Usage: !autodeletelevelroles [all|user|userid]
+        [Admin] Deletes level roles from users.
+        Usage: !autodeletelevelroles [user|userid]
         Examples:
-            !autodeletelevelroles all            - Deletes ALL level roles from server
             !autodeletelevelroles user @User     - Removes ALL level roles from a specific user
             !autodeletelevelroles userid 123456789 - Removes ALL level roles by user ID
         """
         guild = ctx.guild
         
         if target is None:
-            return await ctx.send("❌ Please specify: `all`, `user @User`, or `userid 123456789`")
+            return await ctx.send("❌ Please specify: `user @User` or `userid 123456789`")
         
         target = target.lower()
         
-        # Option 1: Delete all level roles from the server
-        if target == "all":
-            if str(guild.id) not in self.level_roles:
-                return await ctx.send("❌ No level roles configured for this server.")
-            
-            deleted_count = 0
-            for level, role_id in self.level_roles[str(guild.id)].items():
-                role = guild.get_role(role_id)
-                if role:
-                    try:
-                        await role.delete(reason="Auto-delete all level roles")
-                        deleted_count += 1
-                    except discord.Forbidden:
-                        pass
-            
-            # Clear from database
-            del self.level_roles[str(guild.id)]
-            self.save_data()
-            
-            return await ctx.send(f"✅ Deleted {deleted_count} level roles from the server.")
-        
-        # Option 2: Remove all level roles from a specific user
-        elif target == "user":
+        # Option 1: Remove all level roles from a specific user
+        if target == "user":
             if not ctx.message.mentions:
                 return await ctx.send("❌ Please mention a user: `!autodeletelevelroles user @User`")
             
             member = ctx.message.mentions[0]
             return await self.remove_user_level_roles(ctx, member)
         
-        # Option 3: Remove all level roles from a user by ID
+        # Option 2: Remove all level roles from a user by ID
         elif target == "userid":
             if not user_id:
                 return await ctx.send("❌ Please provide a user ID: `!autodeletelevelroles userid 123456789`")
@@ -168,7 +187,7 @@ class LevelBot(commands.Cog):
                 return await ctx.send("❌ Invalid user ID. Please provide a valid numeric ID.")
         
         else:
-            return await ctx.send("❌ Invalid option. Use: `all`, `user @User`, or `userid 123456789`")
+            return await ctx.send("❌ Invalid option. Use: `user @User` or `userid 123456789`")
 
     async def remove_user_level_roles(self, ctx, member):
         """Helper function to remove all level roles from a user"""
@@ -269,7 +288,6 @@ class LevelBot(commands.Cog):
     async def on_member_update(self, before, after):
         """Automatically assign level roles when a user levels up"""
         # You need to implement this with your XP system
-        # This would detect when a user's level changes and assign the appropriate role
         pass
 
 async def setup(bot):
