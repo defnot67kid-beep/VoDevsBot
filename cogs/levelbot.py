@@ -107,34 +107,38 @@ class LevelBot(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def remove_all_level_roles(self, ctx):
         """
-        [Admin] Deletes ALL level role objects from the server.
+        [Admin] Deletes ALL level role objects from the server (including any that start with 'Level ').
         Usage: !removealllevelroles
         """
         guild = ctx.guild
-        
-        if str(guild.id) not in self.level_roles or not self.level_roles[str(guild.id)]:
-            return await ctx.send("❌ No level roles configured for this server.")
-        
         deleted_count = 0
         failed_count = 0
         deleted_roles = []
-        
-        for level, role_id in self.level_roles[str(guild.id)].items():
-            role = guild.get_role(role_id)
-            if role:
-                try:
-                    await role.delete(reason="Removed all level roles by admin request")
-                    deleted_count += 1
-                    deleted_roles.append(role.name)
-                except discord.Forbidden:
-                    failed_count += 1
-                except discord.HTTPException:
-                    failed_count += 1
-        
-        # Clear from database
-        del self.level_roles[str(guild.id)]
-        self.save_data()
-        
+
+        # STEP 1: Find ALL roles that start with "Level " in the server
+        level_roles = [role for role in guild.roles if role.name.startswith("Level ")]
+
+        if not level_roles:
+            return await ctx.send("❌ No roles starting with 'Level ' found in this server.")
+
+        await ctx.send(f"🔍 Found **{len(level_roles)}** level roles. Deleting them now...")
+
+        # STEP 2: Delete them all
+        for role in level_roles:
+            try:
+                await role.delete(reason="Removed all level roles by admin request")
+                deleted_count += 1
+                deleted_roles.append(role.name)
+            except discord.Forbidden:
+                failed_count += 1
+            except discord.HTTPException:
+                failed_count += 1
+
+        # STEP 3: Clear the roles from the database too
+        if str(guild.id) in self.level_roles:
+            del self.level_roles[str(guild.id)]
+            self.save_data()
+
         embed = discord.Embed(
             title="🗑️ Level Roles Removed",
             color=discord.Color.red()
@@ -193,23 +197,21 @@ class LevelBot(commands.Cog):
         """Helper function to remove all level roles from a user"""
         guild = ctx.guild
         
-        if str(guild.id) not in self.level_roles:
-            return await ctx.send("❌ No level roles configured for this server.")
+        # Look for roles starting with "Level " on the user
+        level_roles_on_user = [role for role in member.roles if role.name.startswith("Level ")]
+        
+        if not level_roles_on_user:
+            return await ctx.send(f"ℹ️ {member.mention} has no level roles to remove.")
         
         removed_count = 0
-        for level, role_id in self.level_roles[str(guild.id)].items():
-            role = guild.get_role(role_id)
-            if role and role in member.roles:
-                try:
-                    await member.remove_roles(role, reason=f"Auto-delete level roles for user")
-                    removed_count += 1
-                except discord.Forbidden:
-                    pass
+        for role in level_roles_on_user:
+            try:
+                await member.remove_roles(role, reason=f"Auto-delete level roles for user")
+                removed_count += 1
+            except discord.Forbidden:
+                pass
         
-        if removed_count > 0:
-            await ctx.send(f"✅ Removed {removed_count} level roles from {member.mention}.")
-        else:
-            await ctx.send(f"ℹ️ {member.mention} has no level roles to remove.")
+        await ctx.send(f"✅ Removed {removed_count} level roles from {member.mention}.")
 
     @commands.command(name="addlevelrole")
     @commands.has_permissions(administrator=True)
