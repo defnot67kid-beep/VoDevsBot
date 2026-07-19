@@ -488,3 +488,9 @@ class LevelBot(commands.Cog):
                     await message.channel.send(embed=embed)
                 except discord.Forbidden:
                     pass  # Bot doesn't have perms to add roles
+
+# ==========================================
+# SETUP FUNCTION (FIXED)
+# ==========================================
+async def setup(bot):
+    await bot.add_cog(LevelBot(bot))
