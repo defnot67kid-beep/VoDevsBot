@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import json
 import os
+import re
 
 # ============================================
 # DATABASE SETUP
@@ -12,7 +13,7 @@ def load_data():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "r") as f:
             return json.load(f)
-    return {"allowed_users": [], "allowed_roles": [], "blocked_users": [], "blocked_roles": []}
+    return {"allowed_targets": [], "blocked_targets": []}
 
 def save_data(data):
     with open(DB_FILE, "w") as f:
@@ -29,33 +30,13 @@ class PingPerm(commands.Cog):
     # ============================================
     # HELPER FUNCTIONS
     # ============================================
-    def is_allowed(self, member: discord.Member):
-        # 1. Owners are always allowed
-        if member.id in self.bot.owner_ids:
-            return True
-        
-        # 2. Check if User ID is explicitly allowed
-        if str(member.id) in self.data["allowed_users"]:
-            return True
-            
-        # 3. Check if User has an Allowed Role
-        for role in member.roles:
-            if str(role.id) in self.data["allowed_roles"]:
-                return True
-                
-        return False
+    def is_target_blocked(self, target_id: int):
+        """Check if a User or Role ID is blocked from being pinged."""
+        return str(target_id) in self.data["blocked_targets"]
 
-    def is_blocked(self, member: discord.Member):
-        # 1. Check if User ID is blocked
-        if str(member.id) in self.data["blocked_users"]:
-            return True
-            
-        # 2. Check if User has a Blocked Role
-        for role in member.roles:
-            if str(role.id) in self.data["blocked_roles"]:
-                return True
-                
-        return False
+    def is_target_allowed(self, target_id: int):
+        """Check if a User or Role ID is allowed to be pinged."""
+        return str(target_id) in self.data["allowed_targets"]
 
     # ============================================
     # COMMAND: !pingallow @role @role OR @user @user
@@ -63,46 +44,31 @@ class PingPerm(commands.Cog):
     @commands.command(name="pingallow")
     @commands.has_permissions(administrator=True)
     async def pingallow(self, ctx, *targets: discord.Object):
-        """[Admin] Allow users (or roles) to ping. Use: !pingallow @Role @User"""
+        """[Admin] Allow specific roles/users to be pinged. Use: !pingallow @Role @User"""
         if not targets:
-            return await ctx.send("❌ Please provide at least one user or role to allow. Example: `!pingallow @SupportTeam @Mods`")
+            return await ctx.send("❌ Please provide at least one user or role. Example: `!pingallow @SupportTeam @Mods`")
 
-        added_users = []
-        added_roles = []
+        added = []
         skipped = []
 
         for target in targets:
-            # 1. Check if it's a Role
-            role = ctx.guild.get_role(target.id)
-            if role:
-                if str(role.id) in self.data["allowed_roles"]:
-                    skipped.append(f"{role.mention} (Already allowed)")
-                else:
-                    self.data["allowed_roles"].append(str(role.id))
-                    added_roles.append(role.mention)
-                continue
-
-            # 2. Check if it's a User (Try to fetch member)
-            try:
-                member = await ctx.guild.fetch_member(target.id)
-                if member:
-                    if str(member.id) in self.data["allowed_users"]:
-                        skipped.append(f"{member.mention} (Already allowed)")
-                    else:
-                        self.data["allowed_users"].append(str(member.id))
-                        added_users.append(member.mention)
-                    continue
-            except:
-                pass
-
-            # 3. If we get here, it's an unknown ID
-            skipped.append(f"`{target.id}` (Not a valid Role or User in this server)")
+            target_id = str(target.id)
+            
+            if target_id in self.data["allowed_targets"]:
+                skipped.append(f"`{target.id}` (Already allowed)")
+            elif target_id in self.data["blocked_targets"]:
+                # Remove from blocked if they are explicitly re-allowed
+                self.data["blocked_targets"].remove(target_id)
+                self.data["allowed_targets"].append(target_id)
+                added.append(f"`{target.id}` (Moved from Blocked to Allowed)")
+            else:
+                self.data["allowed_targets"].append(target_id)
+                added.append(f"`{target.id}`")
 
         save_data(self.data)
 
         msg = ""
-        if added_users: msg += f"✅ Allowed Users: {', '.join(added_users)}\n"
-        if added_roles: msg += f"✅ Allowed Roles: {', '.join(added_roles)}\n"
+        if added: msg += f"✅ Allowed Targets: {', '.join(added)}\n"
         if skipped: msg += f"⚠️ Skipped: {', '.join(skipped)}"
         
         if not msg: msg = "❌ Nothing was changed."
@@ -114,43 +80,31 @@ class PingPerm(commands.Cog):
     @commands.command(name="pingdisallow")
     @commands.has_permissions(administrator=True)
     async def pingdisallow(self, ctx, *targets: discord.Object):
-        """[Admin] Block users (or roles) from pinging. Use: !pingdisallow @Role @User"""
+        """[Admin] Block specific roles/users from being pinged. Use: !pingdisallow @Role @User"""
         if not targets:
-            return await ctx.send("❌ Please provide at least one user or role to block. Example: `!pingdisallow @Muted @PingBanned`")
+            return await ctx.send("❌ Please provide at least one user or role. Example: `!pingdisallow @Muted @User123`")
 
-        added_users = []
-        added_roles = []
+        added = []
         skipped = []
 
         for target in targets:
-            role = ctx.guild.get_role(target.id)
-            if role:
-                if str(role.id) in self.data["blocked_roles"]:
-                    skipped.append(f"{role.mention} (Already blocked)")
-                else:
-                    self.data["blocked_roles"].append(str(role.id))
-                    added_roles.append(role.mention)
-                continue
-
-            try:
-                member = await ctx.guild.fetch_member(target.id)
-                if member:
-                    if str(member.id) in self.data["blocked_users"]:
-                        skipped.append(f"{member.mention} (Already blocked)")
-                    else:
-                        self.data["blocked_users"].append(str(member.id))
-                        added_users.append(member.mention)
-                    continue
-            except:
-                pass
-
-            skipped.append(f"`{target.id}` (Not a valid Role or User)")
+            target_id = str(target.id)
+            
+            if target_id in self.data["blocked_targets"]:
+                skipped.append(f"`{target.id}` (Already blocked)")
+            elif target_id in self.data["allowed_targets"]:
+                # Remove from allowed if they are explicitly blocked
+                self.data["allowed_targets"].remove(target_id)
+                self.data["blocked_targets"].append(target_id)
+                added.append(f"`{target.id}` (Moved from Allowed to Blocked)")
+            else:
+                self.data["blocked_targets"].append(target_id)
+                added.append(f"`{target.id}`")
 
         save_data(self.data)
 
         msg = ""
-        if added_users: msg += f"🚫 Blocked Users: {', '.join(added_users)}\n"
-        if added_roles: msg += f"🚫 Blocked Roles: {', '.join(added_roles)}\n"
+        if added: msg += f"🚫 Blocked Targets: {', '.join(added)}\n"
         if skipped: msg += f"⚠️ Skipped: {', '.join(skipped)}"
         
         if not msg: msg = "❌ Nothing was changed."
@@ -162,29 +116,30 @@ class PingPerm(commands.Cog):
     @commands.command(name="pinglist")
     @commands.has_permissions(administrator=True)
     async def pinglist(self, ctx):
-        """[Admin] List all allowed and blocked roles/users."""
-        embed = discord.Embed(title="📋 Ping Permission List", color=discord.Color.blue())
+        """[Admin] List all allowed and blocked ping targets."""
+        embed = discord.Embed(title="📋 Ping Target Permission List", color=discord.Color.blue())
 
         allowed_text = ""
-        for uid in self.data["allowed_users"]:
-            member = ctx.guild.get_member(int(uid))
-            allowed_text += f"• {member.mention if member else f'`{uid}`'}\n"
-        for rid in self.data["allowed_roles"]:
-            role = ctx.guild.get_role(int(rid))
-            allowed_text += f"• {role.mention if role else f'`{rid}`'} (Role)\n"
+        for tid in self.data["allowed_targets"]:
+            # Attempt to resolve to a mention
+            member = ctx.guild.get_member(int(tid))
+            role = ctx.guild.get_role(int(tid))
+            if member: allowed_text += f"• {member.mention} (User)\n"
+            elif role: allowed_text += f"• {role.mention} (Role)\n"
+            else: allowed_text += f"• `{tid}` (Unknown)\n"
         if not allowed_text: allowed_text = "None"
 
         blocked_text = ""
-        for uid in self.data["blocked_users"]:
-            member = ctx.guild.get_member(int(uid))
-            blocked_text += f"• {member.mention if member else f'`{uid}`'}\n"
-        for rid in self.data["blocked_roles"]:
-            role = ctx.guild.get_role(int(rid))
-            blocked_text += f"• {role.mention if role else f'`{rid}`'} (Role)\n"
+        for tid in self.data["blocked_targets"]:
+            member = ctx.guild.get_member(int(tid))
+            role = ctx.guild.get_role(int(tid))
+            if member: blocked_text += f"• {member.mention} (User)\n"
+            elif role: blocked_text += f"• {role.mention} (Role)\n"
+            else: blocked_text += f"• `{tid}` (Unknown)\n"
         if not blocked_text: blocked_text = "None"
 
-        embed.add_field(name="✅ Allowed to Ping", value=allowed_text, inline=False)
-        embed.add_field(name="❌ Blocked from Pinging", value=blocked_text, inline=False)
+        embed.add_field(name="✅ Allowed Targets", value=allowed_text, inline=False)
+        embed.add_field(name="❌ Blocked Targets", value=blocked_text, inline=False)
         embed.set_footer(text="Blocked overrides Allowed.")
 
         await ctx.send(embed=embed)
@@ -195,37 +150,31 @@ class PingPerm(commands.Cog):
     @commands.command(name="pingclear")
     @commands.has_permissions(administrator=True)
     async def pingclear(self, ctx):
-        """[Admin] Clears all Ping Allow and Disallow permissions."""
-        self.data = {"allowed_users": [], "allowed_roles": [], "blocked_users": [], "blocked_roles": []}
+        """[Admin] Clears all Ping Allow/Disallow target data."""
+        self.data = {"allowed_targets": [], "blocked_targets": []}
         save_data(self.data)
-        await ctx.send("✅ All ping permission data has been cleared.")
+        await ctx.send("✅ All ping target permission data has been cleared.")
 
     # ============================================
-    # GLOBAL CHECK: Intercept any !ping command
+    # GLOBAL INTERCEPT: Intercept any !ping command
     # ============================================
     @commands.Cog.listener()
     async def on_command(self, ctx):
+        # Only intercept commands starting with "ping"
         if ctx.command and ctx.command.name == "ping":
             
-            # 1. Bot admins (Owners) bypass everything
-            if ctx.author.id in self.bot.owner_ids:
-                return
+            # 1. Check if the command has arguments (the targets)
+            if not ctx.message.mentions and not ctx.message.role_mentions:
+                return # No one is being pinged, ignore.
 
-            # 2. Check Blocklist first (Blocked overrides allowed)
-            if self.is_blocked(ctx.author):
-                await ctx.send(f"❌ {ctx.author.mention}, you are banned from pinging anyone.", delete_after=5)
-                raise commands.CommandError(f"{ctx.author} tried to ping but is blocked.")
+            # 2. Check PINGED Users
+            for user in ctx.message.mentions:
+                if self.is_target_blocked(user.id):
+                    await ctx.send(f"❌ You are not allowed to ping {user.mention}. They have been restricted from receiving pings.", delete_after=5)
+                    raise commands.CommandError(f"Ping blocked: {user} is blocked from receiving pings.")
             
-            # 3. Check Allowlist
-            if not self.is_allowed(ctx.author):
-                await ctx.send(f"❌ {ctx.author.mention}, you do not have permission to ping. Please ask an admin for `!pingallow`.", delete_after=5)
-                raise commands.CommandError(f"{ctx.author} tried to ping but is not allowed.")
-                
-            # If we reach here, they are allowed!
-            await ctx.send(f"✅ {ctx.author.mention}, you have permission to ping!", delete_after=3)
-
-# ============================================
-# SETUP FUNCTION
-# ============================================
-async def setup(bot):
-    await bot.add_cog(PingPerm(bot))
+            # 3. Check PINGED Roles
+            for role in ctx.message.role_mentions:
+                if self.is_target_blocked(role.id):
+                    await ctx.send(f"❌ You are not allowed to ping {role.mention}. This role has been restricted from receiving pings.", delete_after=5)
+                    raise commands.CommandError(f"Ping blocked: {role} is blocked from receiving pings.")
