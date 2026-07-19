@@ -229,8 +229,8 @@ async def load_cogs():
         
         # Economy & Leveling
         await bot.load_extension("cogs.economy_ultra")
-        await bot.load_extension("cogs.leveling_pro")
-        await bot.load_extension("cogs.levelbot")    # <--- ADDED YOUR LEVELBOT HERE
+        # REMOVED cogs.leveling_pro
+        await bot.load_extension("cogs.levelbot")    # <--- YOUR NEW LEVELBOT HERE
         
         # Media & Entertainment
         await bot.load_extension("cogs.music_ultimate")
@@ -242,7 +242,7 @@ async def load_cogs():
         await bot.load_extension("cogs.reaction_roles")
         await bot.load_extension("cogs.pingperm")
         await bot.load_extension("cogs.poll")
-        await bot.load_extension("cogs.autorr")        # <--- ADDED YOUR AUTORR HERE
+        await bot.load_extension("cogs.autorr")        # <--- YOUR AUTORR HERE
         await bot.load_extension("cogs.logging_audit")
         
         # Optional cogs (can be disabled if needed)
