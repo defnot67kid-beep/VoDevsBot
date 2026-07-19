@@ -118,11 +118,11 @@ class LevelBot(commands.Cog):
         return level - 1
 
     # ==========================================
-    # COMMANDS
+    # COMMANDS (Renamed to !level to avoid conflicts)
     # ==========================================
 
-    @commands.command(name="rank")
-    async def rank(self, ctx, member: discord.Member = None):
+    @commands.command(name="level", aliases=["lvl"])
+    async def level(self, ctx, member: discord.Member = None):
         """Check your current level and XP progress"""
         if member is None:
             member = ctx.author
@@ -149,7 +149,7 @@ class LevelBot(commands.Cog):
         bar = "█" * int(progress) + "░" * (10 - int(progress))
         
         embed = discord.Embed(
-            title=f"🏆 {member.display_name}'s Rank",
+            title=f"🏆 {member.display_name}'s Level",
             color=self.get_role_color(current_level) if current_level in self.levels else discord.Color.blue()
         )
         embed.add_field(name="Level", value=f"**{current_level}**", inline=True)
@@ -490,7 +490,7 @@ class LevelBot(commands.Cog):
                     pass  # Bot doesn't have perms to add roles
 
 # ==========================================
-# SETUP FUNCTION (FIXED)
+# SETUP FUNCTION
 # ==========================================
 async def setup(bot):
     await bot.add_cog(LevelBot(bot))
