@@ -239,7 +239,9 @@ async def load_cogs():
         await bot.load_extension("cogs.giveaway_raffle")
         await bot.load_extension("cogs.voice_channel")
         await bot.load_extension("cogs.reaction_roles")
-        await bot.load_extension("cogs.pingperm")              # <--- ADDED HERE
+        await bot.load_extension("cogs.pingperm")
+        await bot.load_extension("cogs.poll")          # <--- ADDED HERE
+        await bot.load_extension("cogs.autorr")        # <--- ADDED HERE
         await bot.load_extension("cogs.logging_audit")
         
         # Optional cogs (can be disabled if needed)
