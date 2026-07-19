@@ -16,7 +16,7 @@ class LevelBot(commands.Cog):
         
         # Cooldown dictionary to prevent spam (user_id -> last_message_time)
         self.xp_cooldowns = {}
-        self.COOLDOWN_SECONDS = 60  # Can only earn XP once per minute
+        self.COOLDOWN_SECONDS = 45  # Can earn XP every 45 seconds
         
         # Define the level progression (STOPS AT 100)
         self.levels = [2, 5, 10, 20, 35, 50, 60, 70, 100]
@@ -85,40 +85,45 @@ class LevelBot(commands.Cog):
         return perms
 
     # ==========================================
-    # XP CALCULATION (Hard to get XP)
+    # XP CALCULATION (Accurate 1k to 1M Scaling)
     # ==========================================
     
     def calculate_xp_gain(self, message):
-        """Calculate XP based on message length, with a hard cap"""
+        """Calculate XP based on message length. Longer messages = more XP"""
         content = message.content
         length = len(content)
         
-        # Base XP for just sending a message (low)
-        base_xp = random.randint(10, 15)
+        # Base XP for just sending a message
+        base_xp = random.randint(15, 25)
         
-        # Length bonus: 1 extra XP for every 10 characters, but capped at 30 extra XP
-        length_bonus = min(length // 10, 30)
+        # Length bonus: 1 extra XP for every 5 characters, capped at 100 extra XP
+        length_bonus = min(length // 5, 100)
         
-        # Total XP gained (Hard to get: max ~45 XP per minute)
+        # Total XP gained (Max ~125 XP per 45 seconds)
         total_xp = base_xp + length_bonus
         
         return total_xp
 
     def get_xp_needed(self, level):
-        """Calculate XP needed to reach the next level (Exponential scaling)"""
-        # Level 1 needs 100 XP. Level 100 needs 100,000 XP.
-        # Formula: 100 * (level ^ 1.5)
-        return int(100 * (level ** 1.5))
+        """
+        ACCURATE MATH: 
+        Level 1 = 1,000 XP
+        Level 100 = 1,000,000 XP
+        Formula: 1000 * (level ^ 1.5)
+        """
+        if level <= 0:
+            return 0
+        return int(1000 * (level ** 1.5))
 
     def get_level_from_xp(self, xp):
         """Calculate what level a user is based on total XP"""
-        level = 1
-        while self.get_xp_needed(level) <= xp:
+        level = 0
+        while self.get_xp_needed(level + 1) <= xp:
             level += 1
-        return level - 1
+        return level
 
     # ==========================================
-    # COMMANDS (Renamed to !level to avoid conflicts)
+    # USER COMMANDS
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -145,7 +150,10 @@ class LevelBot(commands.Cog):
         xp_needed_for_next = next_level_xp - prev_level_xp
         
         # Progress bar (10 blocks)
-        progress = (xp_in_level / xp_needed_for_next) * 10
+        if xp_needed_for_next == 0:
+            progress = 10
+        else:
+            progress = (xp_in_level / xp_needed_for_next) * 10
         bar = "█" * int(progress) + "░" * (10 - int(progress))
         
         embed = discord.Embed(
@@ -154,7 +162,7 @@ class LevelBot(commands.Cog):
         )
         embed.add_field(name="Level", value=f"**{current_level}**", inline=True)
         embed.add_field(name="Total XP", value=f"{current_xp:,}", inline=True)
-        embed.add_field(name="Progress", value=f"`[{bar}]` {xp_in_level}/{xp_needed_for_next:,} XP", inline=False)
+        embed.add_field(name="Progress", value=f"`[{bar}]` {xp_in_level:,}/{xp_needed_for_next:,} XP", inline=False)
         
         # Get current highest level role they have
         role_names = [f"Level {l}" for l in self.levels]
@@ -433,7 +441,7 @@ class LevelBot(commands.Cog):
         guild_id = str(message.guild.id)
         user_id = str(message.author.id)
         
-        # 1. Check cooldown (1 minute)
+        # 1. Check cooldown (45 seconds)
         now = asyncio.get_event_loop().time()
         if user_id in self.xp_cooldowns:
             last_time = self.xp_cooldowns[user_id]
