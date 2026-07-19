@@ -276,3 +276,9 @@ class PingPerm(commands.Cog):
                                 await message.delete()
                                 await message.channel.send(f"🚫 You must have the appropriate role permissions to ping <@{target_id_str}>.", delete_after=5)
                                 return
+
+# ============================================
+# SETUP FUNCTION (MANDATORY)
+# ============================================
+async def setup(bot):
+    await bot.add_cog(PingPerm(bot))
