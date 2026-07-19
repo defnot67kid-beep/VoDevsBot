@@ -7,7 +7,7 @@ import logging
 import sys
 import io
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ============================================
 # FIX: Force UTF-8 for Windows Terminals
@@ -104,7 +104,7 @@ async def bot_status(ctx):
     embed = discord.Embed(
         title="🤖 Bot Status",
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.utc)
     )
     
     # Basic info
@@ -230,6 +230,7 @@ async def load_cogs():
         # Economy & Leveling
         await bot.load_extension("cogs.economy_ultra")
         await bot.load_extension("cogs.leveling_pro")
+        await bot.load_extension("cogs.levelbot")    # <--- ADDED YOUR LEVELBOT HERE
         
         # Media & Entertainment
         await bot.load_extension("cogs.music_ultimate")
@@ -240,8 +241,8 @@ async def load_cogs():
         await bot.load_extension("cogs.voice_channel")
         await bot.load_extension("cogs.reaction_roles")
         await bot.load_extension("cogs.pingperm")
-        await bot.load_extension("cogs.poll")          # <--- ADDED HERE
-        await bot.load_extension("cogs.autorr")        # <--- ADDED HERE
+        await bot.load_extension("cogs.poll")
+        await bot.load_extension("cogs.autorr")        # <--- ADDED YOUR AUTORR HERE
         await bot.load_extension("cogs.logging_audit")
         
         # Optional cogs (can be disabled if needed)
