@@ -66,18 +66,18 @@ class Poll(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="pollcrt", aliases=["poll"])
+    @commands.command(name="pollmake")
     @commands.has_permissions(manage_messages=True)
     async def create_poll(self, ctx, size: str = "medium", format: str = "single", *, question_and_options: str):
         """
         [Admin] Creates an advanced poll.
-        Format: !pollcrt <size> <format> "Question" | "Option1" | "Option2" | ...
+        Format: !pollmake <size> <format> "Question" | "Option1" | "Option2" | ...
         Sizes: small, medium, big
         Formats: single, multiple
         """
         # Parse question and options
         if "|" not in question_and_options:
-            return await ctx.send("❌ Please separate the question and options with `|`.\nExample: `!pollcrt medium single \"What is your favorite color?\" | Red | Blue | Green`")
+            return await ctx.send("❌ Please separate the question and options with `|`.\nExample: `!pollmake medium single \"What is your favorite color?\" | Red | Blue | Green`")
         
         parts = [p.strip() for p in question_and_options.split("|")]
         question = parts[0]
