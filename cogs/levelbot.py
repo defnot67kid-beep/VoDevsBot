@@ -655,6 +655,43 @@ class LevelBot(commands.Cog):
         await ctx.send(f"✅ Successfully added **{amount} XP** to {member.mention}!\nThey are now at Level {new_level} with {current_xp:,} total XP.")
 
     # ==========================================
+    # NEW COMMAND: REMOVE XP
+    # ==========================================
+    
+    @commands.command(name="removexp")
+    @commands.has_permissions(administrator=True)
+    async def remove_xp(self, ctx, member: discord.Member, amount: int):
+        """
+        [Admin] Manually removes XP from a user.
+        Usage: !removexp @User 500
+        """
+        if amount <= 0:
+            return await ctx.send("❌ You must remove a positive amount of XP!")
+
+        guild_id = str(ctx.guild.id)
+        user_id = str(member.id)
+
+        # Check if user has data
+        if guild_id not in self.level_data or user_id not in self.level_data[guild_id]:
+            return await ctx.send(f"❌ {member.mention} doesn't have any XP to remove!")
+
+        current_xp = self.level_data[guild_id][user_id]["xp"]
+
+        # Prevent removing more XP than they have (can't go below 0)
+        if current_xp < amount:
+            return await ctx.send(f"❌ {member.mention} only has {current_xp:,} XP. You cannot remove {amount} XP!")
+
+        # Remove the XP
+        self.level_data[guild_id][user_id]["xp"] -= amount
+        self.save_data()
+
+        # Get new level after removing XP
+        new_xp = self.level_data[guild_id][user_id]["xp"]
+        new_level = self.get_level_from_xp(new_xp)
+        
+        await ctx.send(f"✅ Successfully removed **{amount} XP** from {member.mention}!\nThey are now at Level {new_level} with {new_xp:,} total XP.")
+
+    # ==========================================
     # XP LISTENER (The Core System - Fixed Spam + Channel)
     # ==========================================
 
