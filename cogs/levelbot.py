@@ -179,7 +179,7 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # FINAL !LEVEL COMMAND (Forces PNG for 100% Avatar Success)
+    # FINAL !LEVEL COMMAND (Strips Emojis & Sends PNG Avatar)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -190,7 +190,10 @@ class LevelBot(commands.Cog):
         
         user_id = str(member.id)
         guild_id = str(ctx.guild.id)
-        display_name = member.display_name
+        
+        # Strip emojis from the display name before sending it!
+        raw_name = member.display_name
+        clean_name = ''.join(c for c in raw_name if c.isalnum() or c in (' ', '-', '_', '.', '#'))
         
         # Get the XP data for this user
         if guild_id not in self.level_data or user_id not in self.level_data[guild_id]:
@@ -212,19 +215,14 @@ class LevelBot(commands.Cog):
         else:
             progress = xp_in_level / xp_needed_for_next
         
-        # ================== THE FIX ==================
-        # Force the avatar to be a .png. 
-        # This handles normal avatars AND animated avatars without crashing.
+        # Get the avatar URL as a PNG (Prevents GIF crashes)
         avatar_url = member.display_avatar.with_format("png").replace(size=512).url
-        # =============================================
         
-        # Pull the public dashboard URL from Railway Environment Variables
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         
-        # Pass EVERYTHING including the AVATAR in the URL!
-        image_url = f"{dashboard_url}/get_card/{user_id}?name={display_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}"
+        # Pass the clean name (no emojis!) to the URL
+        image_url = f"{dashboard_url}/get_card/{user_id}?name={clean_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}"
         
-        # Create an embed with the image
         embed = discord.Embed(color=discord.Color.blue())
         embed.set_image(url=image_url)
         embed.set_footer(text="Customize your card at the Dashboard!")
