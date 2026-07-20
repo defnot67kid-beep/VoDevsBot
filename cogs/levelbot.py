@@ -179,7 +179,7 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # UPDATED !LEVEL COMMAND (Pulls Dashboard Image)
+    # UPDATED !LEVEL COMMAND (Pulls Dashboard Image with XP & Progress)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -189,10 +189,33 @@ class LevelBot(commands.Cog):
             member = ctx.author
         
         user_id = str(member.id)
+        guild_id = str(ctx.guild.id)
+        
+        # Get the XP data for this user
+        if guild_id not in self.level_data or user_id not in self.level_data[guild_id]:
+            return await ctx.send(f"❌ {member.mention} hasn't chatted enough to have a rank yet!")
+        
+        user_data = self.level_data[guild_id][user_id]
+        current_xp = user_data["xp"]
+        current_level = self.get_level_from_xp(current_xp)
+        
+        # Calculate progress to next level
+        next_level_xp = self.get_xp_needed(current_level + 1)
+        prev_level_xp = self.get_xp_needed(current_level)
+        xp_in_level = current_xp - prev_level_xp
+        xp_needed_for_next = next_level_xp - prev_level_xp
+        
+        # Calculate percentage (0.0 to 1.0) for the progress bar
+        if xp_needed_for_next == 0:
+            progress = 1.0
+        else:
+            progress = xp_in_level / xp_needed_for_next
         
         # Pull the public dashboard URL from Railway Environment Variables
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
-        image_url = f"{dashboard_url}/get_card/{user_id}"
+        
+        # Pass XP and Progress in the URL!
+        image_url = f"{dashboard_url}/get_card/{user_id}?xp={int(current_xp)}&progress={progress:.2f}"
         
         # Create an embed with the image
         embed = discord.Embed(color=discord.Color.blue())
