@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit Rank Card</title>
+    <style>
+        body { font-family: sans-serif; background: #1e1e2e; color: white; padding: 20px; text-align: center; }
+        .container { max-width: 600px; margin: 0 auto; background: #2f3136; padding: 20px; border-radius: 12px; }
+        .preview { width: 100%; height: 200px; border-radius: 8px; margin-bottom: 20px; border: 2px solid #444; }
+        .control-group { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; }
+        input[type="color"] { border: none; width: 40px; height: 40px; cursor: pointer; background: transparent; }
+        input[type="range"] { width: 60%; }
+        .btn { background: #45ddc0; border: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; cursor: pointer; margin-top: 15px; }
+        .btn:hover { background: #3bc9b0; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>🎨 Edit Rank Card</h2>
+    <div class="preview" id="preview" style="background: {{ config.bg_color or '#2f3136' }};"></div>
+
+    <div class="control-group">
+        <label>Progress Bar Color</label>
+        <input type="color" id="bar_color" value="{{ config.bar_color or '#5865F2' }}" onchange="updatePreview()">
+    </div>
+
+    <div class="control-group">
+        <label>Opacity</label>
+        <input type="range" id="opacity" min="0" max="100" value="{{ config.opacity or 100 }}" onchange="updatePreview()">
+    </div>
+
+    <div class="control-group">
+        <label>Background Color</label>
+        <input type="color" id="bg_color" value="{{ config.bg_color or '#2f3136' }}" onchange="updatePreview()">
+    </div>
+
+    <button class="btn" onclick="saveCard()">💾 Save Card</button>
+</div>
+
+<script>
+    function updatePreview() {
+        document.getElementById('preview').style.backgroundColor = document.getElementById('bg_color').value;
+        document.getElementById('preview').style.opacity = document.getElementById('opacity').value / 100;
+    }
+
+    async function saveCard() {
+        const data = {
+            bar_color: document.getElementById('bar_color').value,
+            opacity: parseInt(document.getElementById('opacity').value),
+            bg_color: document.getElementById('bg_color').value
+        };
+
+        const res = await fetch(`/save_config/{{ user_id }}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        alert("✅ Card saved! Go back to Discord and run !level to see your new rank card.");
+    }
+
+    updatePreview();
+</script>
+</body>
+</html>
