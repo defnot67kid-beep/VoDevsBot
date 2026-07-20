@@ -9,20 +9,28 @@ import aiohttp
 import io
 
 # ==========================================
-# BUTTON VIEW (Secure /card button)
+# INTERACTIVE BUTTON VIEW (Checks login status)
 # ==========================================
 class CardButton(discord.ui.View):
-    def __init__(self, dashboard_url):
+    def __init__(self, dashboard_url, guild_id, user_id):
         super().__init__(timeout=None)
-        # We point to /dashboard instead of a specific user ID.
-        # The OAuth2 system will handle the login and redirect them to their own dashboard.
-        self.add_item(
-            discord.ui.Button(
-                label="/card",
-                style=discord.ButtonStyle.link,
-                url=f"{dashboard_url}/dashboard",
-                emoji="🎨"
-            )
+        self.dashboard_url = dashboard_url
+        self.guild_id = guild_id
+        self.user_id = user_id
+
+    @discord.ui.button(label="/card", style=discord.ButtonStyle.primary, emoji="🎨")
+    async def card_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # This button runs when clicked. We can check login status here!
+        
+        # Construct the specific URL for this user
+        specific_url = f"{self.dashboard_url}/dashboard/{self.guild_id}/{self.user_id}"
+        
+        # Send the link as an ephemeral message (Only the user can see it)
+        # If they are logged in, it takes them directly to their card.
+        # If they aren't logged in, it takes them to the login screen, then redirects them back to this URL automatically!
+        await interaction.response.send_message(
+            f"🔗 Click this link to edit your rank card:\n{specific_url}",
+            ephemeral=True  # This keeps it private!
         )
 
 class LevelBot(commands.Cog):
@@ -259,10 +267,10 @@ class LevelBot(commands.Cog):
                         embed = discord.Embed(color=discord.Color.blue())
                         embed.set_image(url="attachment://rank.png")
                         
-                        # Create the button view (Points to /dashboard for OAuth2 login!)
-                        view = CardButton(dashboard_url)
+                        # Create the interactive button view (Handles the specific link)
+                        view = CardButton(dashboard_url, guild_id, user_id)
                         
-                        # Send embed with file attached
+                        # Send embed with button
                         await ctx.send(embed=embed, view=view, file=file)
                     else:
                         # Fallback if the dashboard is down
