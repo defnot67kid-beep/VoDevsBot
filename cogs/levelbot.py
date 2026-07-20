@@ -9,25 +9,50 @@ import aiohttp
 import io
 
 # ==========================================
-# INTERACTIVE BUTTON VIEW (Checks login status)
+# SMART BUTTON VIEW (Disabled if not the owner)
 # ==========================================
 class CardButton(discord.ui.View):
-    def __init__(self, dashboard_url, guild_id, user_id):
+    def __init__(self, dashboard_url, guild_id, target_user_id, ctx_author_id):
         super().__init__(timeout=None)
         self.dashboard_url = dashboard_url
         self.guild_id = guild_id
-        self.user_id = user_id
+        self.target_user_id = target_user_id
+        self.ctx_author_id = ctx_author_id
 
     @discord.ui.button(label="/card", style=discord.ButtonStyle.primary, emoji="🎨")
     async def card_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # SECURITY CHECK: Only the person whose card is displayed can use this!
+        if str(interaction.user.id) != self.target_user_id:
+            await interaction.response.send_message(
+                f"❌ You cannot edit {interaction.user.mention}'s card! Only the owner can edit their own card.",
+                ephemeral=True
+            )
+            return
+
         # Construct the specific URL for this user
-        specific_url = f"{self.dashboard_url}/dashboard/{self.guild_id}/{self.user_id}"
+        specific_url = f"{self.dashboard_url}/dashboard/{self.guild_id}/{self.target_user_id}"
         
         # Send the link as an ephemeral message (Only the user can see it)
         await interaction.response.send_message(
             f"🔗 Click this link to edit your rank card:\n{specific_url}",
             ephemeral=True
         )
+
+    # This function runs AFTER the view is created to check if we should grey out the button
+    async def interaction_check(self, interaction: discord.Interaction):
+        # If the person clicking is NOT the owner of the card, disable the button visually
+        if str(interaction.user.id) != self.target_user_id:
+            # We disable ALL items in the view (just the button)
+            for child in self.children:
+                child.disabled = True
+            await interaction.response.edit_message(view=self)
+            # Then we send the error message
+            await interaction.followup.send(
+                f"❌ This card belongs to <@{self.target_user_id}>. You cannot edit it!",
+                ephemeral=True
+            )
+            return False
+        return True
 
 class LevelBot(commands.Cog):
     def __init__(self, bot):
@@ -202,7 +227,7 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # FINAL !LEVEL COMMAND (No Ping + Sends Level)
+    # FINAL !LEVEL COMMAND (Smart Button + No Ping + Sends Level)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -254,7 +279,11 @@ class LevelBot(commands.Cog):
                         file = discord.File(fp=io.BytesIO(image_data), filename="rank.png")
                         embed = discord.Embed(color=discord.Color.blue())
                         embed.set_image(url="attachment://rank.png")
-                        view = CardButton(dashboard_url, guild_id, user_id)
+                        
+                        # Pass the AUTHOR ID to the view so it knows WHO clicked it!
+                        # ctx.author.id is YOU. user_id is LIAN (if viewing Lian's card).
+                        view = CardButton(dashboard_url, guild_id, user_id, ctx.author.id)
+                        
                         await ctx.send(embed=embed, view=view, file=file)
                     else:
                         await ctx.send(f"❌ Failed to generate rank card (Dashboard returned {resp.status})")
