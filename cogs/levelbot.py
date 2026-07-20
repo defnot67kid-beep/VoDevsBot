@@ -3,7 +3,7 @@ from discord.ext import commands
 import json
 import os
 import asyncio
-import math
+import math 
 import random
 import io
 from PIL import Image, ImageDraw, ImageFont, ImageOps
