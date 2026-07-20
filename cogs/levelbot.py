@@ -5,19 +5,21 @@ import os
 import asyncio
 import math
 import random
+import aiohttp
+import io
 
 # ==========================================
 # BUTTON VIEW (Interactive /card button)
 # ==========================================
 class CardButton(discord.ui.View):
-    def __init__(self, dashboard_url, user_id):
+    def __init__(self, dashboard_url, guild_id, user_id):
         super().__init__(timeout=None)
-        # Add the button with a link to their specific dashboard
+        # Add the button with a link to their specific server dashboard
         self.add_item(
             discord.ui.Button(
                 label="/card",
                 style=discord.ButtonStyle.link,
-                url=f"{dashboard_url}/dashboard/{user_id}",
+                url=f"{dashboard_url}/dashboard/{guild_id}/{user_id}",
                 emoji="🎨"
             )
         )
@@ -195,7 +197,7 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # FINAL !LEVEL COMMAND (Button + No Footer)
+    # PREMIUM !LEVEL COMMAND (Server Isolated, Full Width Attachment)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -204,8 +206,8 @@ class LevelBot(commands.Cog):
         if member is None:
             member = ctx.author
         
-        user_id = str(member.id)
         guild_id = str(ctx.guild.id)
+        user_id = str(member.id)
         
         # Strip emojis from the display name before sending it!
         raw_name = member.display_name
@@ -236,18 +238,36 @@ class LevelBot(commands.Cog):
         
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         
-        # Pass the clean name (no emojis!) to the URL
-        image_url = f"{dashboard_url}/get_card/{user_id}?name={clean_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}"
+        # Build the URL with GUILD_ID + USER_ID
+        image_url = f"{dashboard_url}/get_card/{guild_id}/{user_id}?name={clean_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}"
         
-        # Create the embed (No footer!)
-        embed = discord.Embed(color=discord.Color.blue())
-        embed.set_image(url=image_url)
-        
-        # Create the button view
-        view = CardButton(dashboard_url, user_id)
-        
-        # Send embed with button
-        await ctx.send(embed=embed, view=view)
+        # =========================================================================
+        # THE FIX: Download the image, then send it as an attachment inside the embed
+        # =========================================================================
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url) as resp:
+                    if resp.status == 200:
+                        # Read the raw image bytes
+                        image_data = await resp.read()
+                        
+                        # Create a Discord File object
+                        file = discord.File(fp=io.BytesIO(image_data), filename="rank.png")
+                        
+                        # Create the embed and attach the file
+                        embed = discord.Embed(color=discord.Color.blue())
+                        embed.set_image(url="attachment://rank.png")
+                        
+                        # Create the button view with GUILD_ID + USER_ID
+                        view = CardButton(dashboard_url, guild_id, user_id)
+                        
+                        # Send embed with file attached
+                        await ctx.send(embed=embed, view=view, file=file)
+                    else:
+                        # Fallback if the dashboard is down
+                        await ctx.send(f"❌ Failed to generate rank card (Dashboard returned {resp.status})")
+        except Exception as e:
+            await ctx.send(f"❌ Error fetching rank card: {e}")
 
     @commands.command(name="leaderboard")
     async def leaderboard(self, ctx):
