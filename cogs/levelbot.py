@@ -9,17 +9,18 @@ import aiohttp
 import io
 
 # ==========================================
-# BUTTON VIEW (Interactive /card button)
+# BUTTON VIEW (Secure /card button)
 # ==========================================
 class CardButton(discord.ui.View):
-    def __init__(self, dashboard_url, guild_id, user_id):
+    def __init__(self, dashboard_url):
         super().__init__(timeout=None)
-        # Add the button with a link to their specific server dashboard
+        # We point to /dashboard instead of a specific user ID.
+        # The OAuth2 system will handle the login and redirect them to their own dashboard.
         self.add_item(
             discord.ui.Button(
                 label="/card",
                 style=discord.ButtonStyle.link,
-                url=f"{dashboard_url}/dashboard/{guild_id}/{user_id}",
+                url=f"{dashboard_url}/dashboard",
                 emoji="🎨"
             )
         )
@@ -197,7 +198,7 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # PREMIUM !LEVEL COMMAND (Server Isolated, Full Width Attachment)
+    # PREMIUM !LEVEL COMMAND (Full Width Attachment)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -258,8 +259,8 @@ class LevelBot(commands.Cog):
                         embed = discord.Embed(color=discord.Color.blue())
                         embed.set_image(url="attachment://rank.png")
                         
-                        # Create the button view with GUILD_ID + USER_ID
-                        view = CardButton(dashboard_url, guild_id, user_id)
+                        # Create the button view (Points to /dashboard for OAuth2 login!)
+                        view = CardButton(dashboard_url)
                         
                         # Send embed with file attached
                         await ctx.send(embed=embed, view=view, file=file)
