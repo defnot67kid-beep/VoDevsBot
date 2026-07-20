@@ -226,8 +226,20 @@ class LevelBot(commands.Cog):
             level += 1
         return level
 
+    def get_rank(self, guild_id, user_id):
+        """Helper to get the user's rank on the leaderboard"""
+        if guild_id not in self.level_data or user_id not in self.level_data[guild_id]:
+            return 0
+            
+        # Sort users by XP and find the rank
+        sorted_users = sorted(self.level_data[guild_id].items(), key=lambda x: x[1]["xp"], reverse=True)
+        for i, (uid, data) in enumerate(sorted_users, 1):
+            if uid == user_id:
+                return i
+        return 0
+
     # ==========================================
-    # FINAL !LEVEL COMMAND (Smart Button + No Ping + Sends Level)
+    # FINAL !LEVEL COMMAND (Smart Button + No Ping + Sends Level + Rank)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -263,13 +275,16 @@ class LevelBot(commands.Cog):
         else:
             progress = xp_in_level / xp_needed_for_next
         
+        # Calculate Rank
+        rank = self.get_rank(guild_id, user_id)
+        
         # Get the avatar URL as a PNG (Prevents GIF crashes)
         avatar_url = member.display_avatar.with_format("png").replace(size=512).url
         
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         
-        # Build the URL with GUILD_ID + USER_ID + LEVEL
-        image_url = f"{dashboard_url}/get_card/{guild_id}/{user_id}?name={clean_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}&level={current_level}"
+        # Build the URL with GUILD_ID + USER_ID + LEVEL + RANK
+        image_url = f"{dashboard_url}/get_card/{guild_id}/{user_id}?name={clean_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}&level={current_level}&rank={rank}"
         
         try:
             async with aiohttp.ClientSession() as session:
