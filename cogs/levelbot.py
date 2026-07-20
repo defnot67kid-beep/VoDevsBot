@@ -20,17 +20,13 @@ class CardButton(discord.ui.View):
 
     @discord.ui.button(label="/card", style=discord.ButtonStyle.primary, emoji="🎨")
     async def card_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # This button runs when clicked. We can check login status here!
-        
         # Construct the specific URL for this user
         specific_url = f"{self.dashboard_url}/dashboard/{self.guild_id}/{self.user_id}"
         
         # Send the link as an ephemeral message (Only the user can see it)
-        # If they are logged in, it takes them directly to their card.
-        # If they aren't logged in, it takes them to the login screen, then redirects them back to this URL automatically!
         await interaction.response.send_message(
             f"🔗 Click this link to edit your rank card:\n{specific_url}",
-            ephemeral=True  # This keeps it private!
+            ephemeral=True
         )
 
 class LevelBot(commands.Cog):
@@ -206,12 +202,12 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # PREMIUM !LEVEL COMMAND (Full Width Attachment)
+    # FINAL !LEVEL COMMAND (No Ping + Sends Level)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
-    async def level(self, ctx, member: discord.Member = None):
-        """Check your current level and XP progress"""
+    async def level(self, ctx, *, member: discord.Member = None):
+        """Check your current level and XP progress. Usage: !level, !level @User, !level Name"""
         if member is None:
             member = ctx.author
         
@@ -247,33 +243,20 @@ class LevelBot(commands.Cog):
         
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         
-        # Build the URL with GUILD_ID + USER_ID
-        image_url = f"{dashboard_url}/get_card/{guild_id}/{user_id}?name={clean_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}"
+        # Build the URL with GUILD_ID + USER_ID + LEVEL
+        image_url = f"{dashboard_url}/get_card/{guild_id}/{user_id}?name={clean_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}&level={current_level}"
         
-        # =========================================================================
-        # THE FIX: Download the image, then send it as an attachment inside the embed
-        # =========================================================================
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url) as resp:
                     if resp.status == 200:
-                        # Read the raw image bytes
                         image_data = await resp.read()
-                        
-                        # Create a Discord File object
                         file = discord.File(fp=io.BytesIO(image_data), filename="rank.png")
-                        
-                        # Create the embed and attach the file
                         embed = discord.Embed(color=discord.Color.blue())
                         embed.set_image(url="attachment://rank.png")
-                        
-                        # Create the interactive button view (Handles the specific link)
                         view = CardButton(dashboard_url, guild_id, user_id)
-                        
-                        # Send embed with button
                         await ctx.send(embed=embed, view=view, file=file)
                     else:
-                        # Fallback if the dashboard is down
                         await ctx.send(f"❌ Failed to generate rank card (Dashboard returned {resp.status})")
         except Exception as e:
             await ctx.send(f"❌ Error fetching rank card: {e}")
