@@ -179,7 +179,7 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # UPDATED !LEVEL COMMAND (Sends Name, XP, Next XP, Progress)
+    # UPDATED !LEVEL COMMAND (Sends Name, XP, Next XP, Progress, and AVATAR URL)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -190,7 +190,7 @@ class LevelBot(commands.Cog):
         
         user_id = str(member.id)
         guild_id = str(ctx.guild.id)
-        display_name = member.display_name  # Gets their nickname or username
+        display_name = member.display_name
         
         # Get the XP data for this user
         if guild_id not in self.level_data or user_id not in self.level_data[guild_id]:
@@ -212,11 +212,15 @@ class LevelBot(commands.Cog):
         else:
             progress = xp_in_level / xp_needed_for_next
         
+        # THE FIX: Get the user's avatar URL directly from Discord.py
+        # display_avatar handles custom, animated, and default avatars automatically
+        avatar_url = member.display_avatar.replace(size=512).url
+        
         # Pull the public dashboard URL from Railway Environment Variables
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         
-        # Pass Name, XP, Next Level XP, and Progress in the URL!
-        image_url = f"{dashboard_url}/get_card/{user_id}?name={display_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}"
+        # Pass EVERYTHING including the AVATAR in the URL!
+        image_url = f"{dashboard_url}/get_card/{user_id}?name={display_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}"
         
         # Create an embed with the image
         embed = discord.Embed(color=discord.Color.blue())
