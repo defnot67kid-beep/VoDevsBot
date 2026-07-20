@@ -616,12 +616,16 @@ class LevelBot(commands.Cog):
         
         await ctx.send(embed=embed)
 
+    # ==========================================
+    # UPDATED ADDXP / REMOVEXP (Accepts Decimals!)
+    # ==========================================
+
     @commands.command(name="addxp")
     @commands.has_permissions(administrator=True)
-    async def add_xp(self, ctx, member: discord.Member, amount: int):
+    async def add_xp(self, ctx, member: discord.Member, amount: float):
         """
-        [Admin] Manually adds XP to a user.
-        Usage: !addxp @User 500
+        [Admin] Manually adds XP to a user. Accepts decimals.
+        Usage: !addxp @User 500  or  !addxp @User 0.18
         """
         if amount <= 0:
             return await ctx.send("❌ You must add a positive amount of XP!")
@@ -635,13 +639,15 @@ class LevelBot(commands.Cog):
         if user_id not in self.level_data[guild_id]:
             self.level_data[guild_id][user_id] = {"xp": 0}
 
-        # Add the XP
-        self.level_data[guild_id][user_id]["xp"] += amount
+        # Calculate new XP and ROUND immediately
+        current_xp = self.level_data[guild_id][user_id]["xp"]
+        new_xp = round(current_xp + amount)
+        
+        self.level_data[guild_id][user_id]["xp"] = new_xp
         self.save_data()
 
         # Get new level after adding XP
-        current_xp = self.level_data[guild_id][user_id]["xp"]
-        new_level = self.get_level_from_xp(current_xp)
+        new_level = self.get_level_from_xp(new_xp)
 
         # Check if they leveled up from the manual XP and assign role if needed
         if new_level in self.levels:
@@ -655,13 +661,13 @@ class LevelBot(commands.Cog):
                     await ctx.send(f"✅ Added {amount} XP to {member.mention}. They reached Level {new_level}, but I couldn't assign the role (missing permissions).")
                 return
 
-        await ctx.send(f"✅ Successfully added **{amount} XP** to {member.mention}!\nThey are now at Level {new_level} with {current_xp:,} total XP.")
+        await ctx.send(f"✅ Successfully added **{amount} XP** to {member.mention}!\nThey are now at Level {new_level} with {new_xp:,} total XP.")
 
     @commands.command(name="removexp")
     @commands.has_permissions(administrator=True)
-    async def remove_xp(self, ctx, member: discord.Member, amount: int):
+    async def remove_xp(self, ctx, member: discord.Member, amount: float):
         """
-        [Admin] Manually removes XP from a user.
+        [Admin] Manually removes XP from a user. Accepts decimals.
         Usage: !removexp @User 500
         """
         if amount <= 0:
@@ -680,12 +686,17 @@ class LevelBot(commands.Cog):
         if current_xp < amount:
             return await ctx.send(f"❌ {member.mention} only has {current_xp:,} XP. You cannot remove {amount} XP!")
 
-        # Remove the XP
-        self.level_data[guild_id][user_id]["xp"] -= amount
+        # Calculate new XP and ROUND immediately
+        new_xp = round(current_xp - amount)
+        
+        # Ensure it never goes below 0
+        if new_xp < 0:
+            new_xp = 0
+
+        self.level_data[guild_id][user_id]["xp"] = new_xp
         self.save_data()
 
         # Get new level after removing XP
-        new_xp = self.level_data[guild_id][user_id]["xp"]
         new_level = self.get_level_from_xp(new_xp)
         
         await ctx.send(f"✅ Successfully removed **{amount} XP** from {member.mention}!\nThey are now at Level {new_level} with {new_xp:,} total XP.")
