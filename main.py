@@ -33,9 +33,9 @@ logging.basicConfig(
     ]
 )
 
-# Bot setup
+# Bot setup (DISABLED DEFAULT HELP)
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # Global cooldown system
 cooldowns = {}
@@ -212,6 +212,64 @@ async def list_cogs(ctx):
     else:
         await ctx.send("❌ No cogs loaded.")
 
+@bot.command(name="help")
+@commands.has_permissions(administrator=True)
+async def admin_help(ctx):
+    """
+    [Admin] Shows the list of available commands.
+    """
+    embed = discord.Embed(
+        title="🛠️ Admin Command List",
+        description="Here are the commands you can use:",
+        color=discord.Color.blue()
+    )
+    
+    commands_list = """
+    **General:**
+    !whoami - Get your Discord user ID.
+    !botstatus - Check bot permissions & status.
+    
+    **Cog Management:**
+    !load <cog> - Load a specific cog.
+    !unload <cog> - Unload a specific cog.
+    !reload <cog> - Reload a specific cog.
+    !listcogs - List all loaded cogs.
+    !sync - Sync slash commands to the server.
+    !syncglobal - Sync slash commands globally.
+    
+    **Leveling (Admin):**
+    !autosetuplevelroles - Creates the level roles (2-100).
+    !removealllevelroles - Deletes all level roles.
+    !autodeletelevelroles - Removes level roles from a user.
+    !xpslmset <seconds> - Set the XP cooldown.
+    !xpslmby user/role - Bypass XP cooldown for a user/role.
+    !xpslmlist - List users bypassing XP cooldown.
+    !addxp @User <amount> - Add XP to a user.
+    !removexp @User <amount> - Remove XP from a user.
+    
+    **Role Management (Admin):**
+    !giveroletime @Role DD/MM/YYYY DD/MM/YYYY - Give a role based on join date range.
+    !autogiveroletime @Role DD/MM/YYYY - Give a role to members joined before a date.
+    !autogiverolemembs @Role <amount> - Give a role to the first X members.
+    
+    **Backups:**
+    !backup - Create a full backup of all bot data.
+    !restore - Restore all bot data from the backup.
+    !autobackup on/off - Toggle automatic hourly backups.
+    """
+    
+    embed.add_field(name="Commands", value=commands_list, inline=False)
+    embed.set_footer(text="Only admins can see this menu.")
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name="cmds")
+async def public_commands(ctx):
+    """
+    [Public] Shows basic info for regular users.
+    """
+    await ctx.send("📚 To see the full admin command list, use `!help` (Admin only). For your rank, use `!level`!")
+
 # ============================================
 # Load cogs
 # ============================================
@@ -245,7 +303,7 @@ async def load_cogs():
         await bot.load_extension("cogs.pingperm")
         await bot.load_extension("cogs.poll")
         await bot.load_extension("cogs.autorr")        # <--- YOUR AUTORR
-        await bot.load_extension("cogs.giverole")      # <--- NEW GIVEROLE COG ADDED HERE
+        await bot.load_extension("cogs.giverole")      # <--- GIVEROLE COG
         await bot.load_extension("cogs.logging_audit")
         
         # Optional cogs (can be disabled if needed)
