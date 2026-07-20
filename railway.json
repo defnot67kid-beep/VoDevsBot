@@ -1,0 +1,22 @@
+{
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "numReplicas": 1,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  },
+  "services": [
+    {
+      "name": "discord-bot",
+      "command": "python main.py",
+      "port": null
+    },
+    {
+      "name": "rank-dashboard",
+      "command": "python dashboard.py",
+      "port": 8000
+    }
+  ]
+}
