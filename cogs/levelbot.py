@@ -179,7 +179,7 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # FINAL !LEVEL COMMAND (Strips Emojis & Sends PNG Avatar)
+    # FINAL !LEVEL COMMAND (Sends Rank, Name, XP, Next XP, Progress, Avatar)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -215,13 +215,21 @@ class LevelBot(commands.Cog):
         else:
             progress = xp_in_level / xp_needed_for_next
         
+        # Calculate User Rank
+        sorted_users = sorted(self.level_data[guild_id].items(), key=lambda x: x[1]["xp"], reverse=True)
+        rank = 1
+        for uid, data in sorted_users:
+            if uid == user_id:
+                break
+            rank += 1
+        
         # Get the avatar URL as a PNG (Prevents GIF crashes)
         avatar_url = member.display_avatar.with_format("png").replace(size=512).url
         
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         
-        # Pass the clean name (no emojis!) to the URL
-        image_url = f"{dashboard_url}/get_card/{user_id}?name={clean_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}"
+        # Pass the clean name, rank, and data to the URL
+        image_url = f"{dashboard_url}/get_card/{user_id}?name={clean_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}&rank={rank}"
         
         embed = discord.Embed(color=discord.Color.blue())
         embed.set_image(url=image_url)
