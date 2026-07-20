@@ -122,11 +122,11 @@ class LevelBot(commands.Cog):
         return perms
 
     # ==========================================
-    # UPDATED XP CALCULATION (Text + File Size)
+    # UPDATED XP CALCULATION (Text + File Size + ROUNDING)
     # ==========================================
     
     def calculate_xp_gain(self, message):
-        """Calculate XP based on text length and attached file sizes."""
+        """Calculate XP based on text length and attached file sizes. Rounded to nearest integer."""
         
         # 1. XP FROM TEXT (1-5 XP per character, randomized)
         content = message.content
@@ -157,7 +157,8 @@ class LevelBot(commands.Cog):
         if total_xp > 1000:
             total_xp = 1000
             
-        return total_xp
+        # ROUND TO THE NEAREST INTEGER
+        return round(total_xp)
 
     def get_xp_needed(self, level):
         """
@@ -183,7 +184,7 @@ class LevelBot(commands.Cog):
 
     @commands.command(name="level", aliases=["lvl"])
     async def level(self, ctx, member: discord.Member = None):
-        """Check your current level and XP progress"""
+        """Check your current level and XP progress with a beautiful rank card"""
         if member is None:
             member = ctx.author
             
@@ -204,34 +205,31 @@ class LevelBot(commands.Cog):
         xp_in_level = current_xp - prev_level_xp
         xp_needed_for_next = next_level_xp - prev_level_xp
         
-        # Progress bar (10 blocks)
-        if xp_needed_for_next == 0:
-            progress = 10
-        else:
-            progress = (xp_in_level / xp_needed_for_next) * 10
-        bar = "█" * int(progress) + "░" * (10 - int(progress))
+        # ----------------------------------------------------------
+        # BEAUTIFUL RANK CARD API GENERATION
+        # ----------------------------------------------------------
         
-        embed = discord.Embed(
-            title=f"🏆 {member.display_name}'s Level",
-            color=self.get_role_color(current_level) if current_level in self.levels else discord.Color.blue()
+        # The Base API URL (Free public rank card generator)
+        base_url = "https://doodlecord.azurewebsites.net/api/rank"
+        
+        # Build the URL with the user's data
+        card_url = (
+            f"{base_url}?"
+            f"username={member.display_name}&"
+            f"avatar={member.display_avatar.url}&"
+            f"level={current_level}&"
+            f"xp={int(xp_in_level)}&"
+            f"nextxp={int(xp_needed_for_next)}&"
+            f"rank=#{current_level}&"
+            f"barcolor=5d3fd3"  # You can change this hex code to change the bar color globally
         )
-        embed.add_field(name="Level", value=f"**{current_level}**", inline=True)
-        embed.add_field(name="Total XP", value=f"{current_xp:,}", inline=True)
-        embed.add_field(name="Progress", value=f"`[{bar}]` {xp_in_level:,}/{xp_needed_for_next:,} XP", inline=False)
         
-        # Get current highest level role they have
-        role_names = [f"Level {l}" for l in self.levels]
-        user_roles = [role.name for role in member.roles]
-        highest_role = None
-        for role_name in reversed(role_names):
-            if role_name in user_roles:
-                highest_role = role_name
-                break
-        
-        if highest_role:
-            embed.add_field(name="Current Rank Role", value=highest_role, inline=False)
-        
-        embed.set_footer(text=f"Next level at {next_level_xp:,} XP")
+        # Create an embed with the image
+        embed = discord.Embed(
+            color=discord.Color.purple()
+        )
+        embed.set_image(url=card_url)
+        embed.set_footer(text="Use /card to customize this card! (Coming soon)")
         
         await ctx.send(embed=embed)
 
