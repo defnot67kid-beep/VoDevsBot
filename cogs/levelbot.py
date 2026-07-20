@@ -122,7 +122,7 @@ class LevelBot(commands.Cog):
         return perms
 
     # ==========================================
-    # UPDATED XP CALCULATION (Text + File Size + ROUNDING)
+    # XP CALCULATION (Text + File Size + ROUNDING)
     # ==========================================
     
     def calculate_xp_gain(self, message):
@@ -179,7 +179,7 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # USER COMMANDS
+    # UPDATED !LEVEL COMMAND (Pulls Dashboard Image)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -187,52 +187,17 @@ class LevelBot(commands.Cog):
         """Check your current level and XP progress"""
         if member is None:
             member = ctx.author
-            
+        
         user_id = str(member.id)
-        guild_id = str(ctx.guild.id)
         
-        # Check if user has data
-        if guild_id not in self.level_data or user_id not in self.level_data[guild_id]:
-            return await ctx.send(f"❌ {member.mention} hasn't chatted enough to have a rank yet!")
+        # Pull the public dashboard URL from Railway Environment Variables
+        dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
+        image_url = f"{dashboard_url}/get_card/{user_id}"
         
-        user_data = self.level_data[guild_id][user_id]
-        current_xp = user_data["xp"]
-        current_level = self.get_level_from_xp(current_xp)
-        
-        # Calculate progress to next level
-        next_level_xp = self.get_xp_needed(current_level + 1)
-        prev_level_xp = self.get_xp_needed(current_level)
-        xp_in_level = current_xp - prev_level_xp
-        xp_needed_for_next = next_level_xp - prev_level_xp
-        
-        # Progress bar (10 blocks)
-        if xp_needed_for_next == 0:
-            progress = 10
-        else:
-            progress = (xp_in_level / xp_needed_for_next) * 10
-        bar = "█" * int(progress) + "░" * (10 - int(progress))
-        
-        embed = discord.Embed(
-            title=f"🏆 {member.display_name}'s Level",
-            color=self.get_role_color(current_level) if current_level in self.levels else discord.Color.blue()
-        )
-        embed.add_field(name="Level", value=f"**{current_level}**", inline=True)
-        embed.add_field(name="Total XP", value=f"{current_xp:,}", inline=True)
-        embed.add_field(name="Progress", value=f"`[{bar}]` {xp_in_level:,}/{xp_needed_for_next:,} XP", inline=False)
-        
-        # Get current highest level role they have
-        role_names = [f"Level {l}" for l in self.levels]
-        user_roles = [role.name for role in member.roles]
-        highest_role = None
-        for role_name in reversed(role_names):
-            if role_name in user_roles:
-                highest_role = role_name
-                break
-        
-        if highest_role:
-            embed.add_field(name="Current Rank Role", value=highest_role, inline=False)
-        
-        embed.set_footer(text=f"Next level at {next_level_xp:,} XP")
+        # Create an embed with the image
+        embed = discord.Embed(color=discord.Color.blue())
+        embed.set_image(url=image_url)
+        embed.set_footer(text="Customize your card at the Dashboard!")
         
         await ctx.send(embed=embed)
 
