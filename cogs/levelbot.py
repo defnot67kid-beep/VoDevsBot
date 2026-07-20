@@ -6,6 +6,22 @@ import asyncio
 import math
 import random
 
+# ==========================================
+# BUTTON VIEW (Interactive /card button)
+# ==========================================
+class CardButton(discord.ui.View):
+    def __init__(self, dashboard_url, user_id):
+        super().__init__(timeout=None)
+        # Add the button with a link to their specific dashboard
+        self.add_item(
+            discord.ui.Button(
+                label="/card",
+                style=discord.ButtonStyle.link,
+                url=f"{dashboard_url}/dashboard/{user_id}",
+                emoji="🎨"
+            )
+        )
+
 class LevelBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -179,7 +195,7 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # FINAL !LEVEL COMMAND (Strips Emojis & Sends PNG Avatar)
+    # FINAL !LEVEL COMMAND (Button + No Footer)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -223,11 +239,15 @@ class LevelBot(commands.Cog):
         # Pass the clean name (no emojis!) to the URL
         image_url = f"{dashboard_url}/get_card/{user_id}?name={clean_name}&xp={int(current_xp)}&next_xp={int(next_level_xp)}&progress={progress:.2f}&avatar={avatar_url}"
         
+        # Create the embed (No footer!)
         embed = discord.Embed(color=discord.Color.blue())
         embed.set_image(url=image_url)
-        embed.set_footer(text="Customize your card at the Dashboard!")
         
-        await ctx.send(embed=embed)
+        # Create the button view
+        view = CardButton(dashboard_url, user_id)
+        
+        # Send embed with button
+        await ctx.send(embed=embed, view=view)
 
     @commands.command(name="leaderboard")
     async def leaderboard(self, ctx):
@@ -615,10 +635,6 @@ class LevelBot(commands.Cog):
                 )
         
         await ctx.send(embed=embed)
-
-    # ==========================================
-    # UPDATED ADDXP / REMOVEXP (Accepts Decimals!)
-    # ==========================================
 
     @commands.command(name="addxp")
     @commands.has_permissions(administrator=True)
