@@ -239,7 +239,7 @@ class LevelBot(commands.Cog):
         return 0
 
     # ==========================================
-    # FINAL !LEVEL COMMAND (Smart Button + No Ping + Sends Level + Rank)
+    # FINAL !LEVEL COMMAND (Sends RAW Image + Button)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -292,14 +292,15 @@ class LevelBot(commands.Cog):
                     if resp.status == 200:
                         image_data = await resp.read()
                         file = discord.File(fp=io.BytesIO(image_data), filename="rank.png")
-                        embed = discord.Embed(color=discord.Color.blue())
-                        embed.set_image(url="attachment://rank.png")
                         
-                        # Pass the AUTHOR ID to the view so it knows WHO clicked it!
-                        # ctx.author.id is YOU. user_id is LIAN (if viewing Lian's card).
+                        # Pass the AUTHOR ID to the view
                         view = CardButton(dashboard_url, guild_id, user_id, ctx.author.id)
                         
-                        await ctx.send(embed=embed, view=view, file=file)
+                        # ==============================================================
+                        # SEND AS PURE IMAGE (NO EMBED) - MAXIMUM SIZE, BORDERLESS
+                        # ==============================================================
+                        await ctx.send(file=file, view=view)
+                        
                     else:
                         await ctx.send(f"❌ Failed to generate rank card (Dashboard returned {resp.status})")
         except Exception as e:
