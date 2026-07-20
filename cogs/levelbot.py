@@ -179,7 +179,7 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # UPDATED !LEVEL COMMAND (Sends Name, XP, Next XP, Progress, and AVATAR URL)
+    # FINAL !LEVEL COMMAND (Forces PNG for 100% Avatar Success)
     # ==========================================
 
     @commands.command(name="level", aliases=["lvl"])
@@ -212,9 +212,11 @@ class LevelBot(commands.Cog):
         else:
             progress = xp_in_level / xp_needed_for_next
         
-        # THE FIX: Get the user's avatar URL directly from Discord.py
-        # display_avatar handles custom, animated, and default avatars automatically
-        avatar_url = member.display_avatar.replace(size=512).url
+        # ================== THE FIX ==================
+        # Force the avatar to be a .png. 
+        # This handles normal avatars AND animated avatars without crashing.
+        avatar_url = member.display_avatar.with_format("png").replace(size=512).url
+        # =============================================
         
         # Pull the public dashboard URL from Railway Environment Variables
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
