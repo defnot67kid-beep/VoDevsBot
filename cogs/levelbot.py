@@ -3,7 +3,7 @@ from discord.ext import commands
 import json
 import os
 import asyncio
-import math 
+import math
 import random
 import io
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -174,22 +174,22 @@ class LevelBot(commands.Cog):
         return level
 
     # ==========================================
-    # NEW: INTERNAL CARD GENERATOR (No external API)
+    # FIXED INTERNAL CARD GENERATOR (No external API)
     # ==========================================
     
     async def generate_rank_card(self, member, level, xp_in_level, xp_needed):
         """
         Generates a rank card image using PIL (Pillow).
-        This runs INSIDE your bot, so it NEVER goes down.
+        FIXED: Converts strictly to RGB and uses PNG format correctly.
         """
-        # 1. Create a blank canvas (800 x 250)
-        img = Image.new('RGB', (800, 250), color=(44, 47, 51))  # Dark grey Discord color
+        # 1. Create a blank canvas (800 x 250) - RGB FORMAT
+        img = Image.new('RGB', (800, 250), color=(44, 47, 51))
         draw = ImageDraw.Draw(img)
         
         # 2. Draw a background border/glow
         draw.rounded_rectangle([(10, 10), (790, 240)], radius=20, fill=(54, 57, 63), outline=(114, 137, 218), width=4)
         
-        # 3. Load fonts (try to use default if custom not found)
+        # 3. Load fonts (Fallback to default if custom not found)
         try:
             font_large = ImageFont.truetype("arial.ttf", 36)
             font_small = ImageFont.truetype("arial.ttf", 20)
@@ -199,18 +199,21 @@ class LevelBot(commands.Cog):
         
         # 4. Get the user's avatar
         avatar_bytes = await member.display_avatar.read()
-        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
         
-        # Crop avatar to a circle
-        mask = Image.new("L", avatar_img.size, 0)
+        # FIX: Ensure avatar is RGBA and resized properly
+        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+        avatar_img = avatar_img.resize((100, 100), Image.Resampling.LANCZOS)
+        
+        # Create circular mask
+        mask = Image.new("L", (100, 100), 0)
         draw_mask = ImageDraw.Draw(mask)
-        draw_mask.ellipse((0, 0, avatar_img.size[0], avatar_img.size[1]), fill=255)
+        draw_mask.ellipse((0, 0, 100, 100), fill=255)
         
         # Paste avatar onto card
         img.paste(avatar_img, (40, 40), mask)
         
         # 5. Draw Border around avatar
-        draw.ellipse([(35, 35), (135, 135)], outline=(114, 137, 218), width=5)
+        draw.ellipse([(35, 35), (145, 145)], outline=(114, 137, 218), width=5)
         
         # 6. Draw Username (White)
         draw.text((165, 50), f"{member.display_name}", font=font_large, fill=(255, 255, 255))
@@ -225,16 +228,17 @@ class LevelBot(commands.Cog):
         bar_h = 30
         draw.rounded_rectangle([(bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h)], radius=15, fill=(44, 47, 51), outline=(99, 102, 108), width=2)
         
-        # 9. Draw Progress Bar Fill (Purple by default)
+        # 9. Draw Progress Bar Fill (Purple)
         if xp_needed > 0:
             fill_width = int((xp_in_level / xp_needed) * bar_w)
             if fill_width > 0:
                 draw.rounded_rectangle([(bar_x, bar_y), (bar_x + fill_width, bar_y + bar_h)], radius=15, fill=(93, 63, 211))
         
-        # 10. Save to buffer and return
+        # 10. Save to buffer (FIXED: Strict PNG format)
         img_buffer = io.BytesIO()
         img.save(img_buffer, format='PNG')
         img_buffer.seek(0)
+        
         return discord.File(img_buffer, filename="rank.png")
 
     # ==========================================
@@ -401,7 +405,6 @@ class LevelBot(commands.Cog):
     @commands.command(name="autosetuplevelroles")
     @commands.has_permissions(administrator=True)
     async def auto_setup_level_roles(self, ctx):
-        # [Your existing role creation code here - unchanged]
         guild = ctx.guild
         created_roles = []
         existing_roles = []
