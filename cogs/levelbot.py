@@ -293,7 +293,7 @@ class LevelBot(commands.Cog):
             await ctx.send(f"❌ Error fetching rank card: {e}")
 
     # ==========================================
-    # BEAUTIFUL LEADERBOARD COMMAND (With Button to Render API)
+    # BEAUTIFUL LEADERBOARD COMMAND (With Button to Web Leaderboard)
     # ==========================================
 
     @commands.command(name="leaderboard")
@@ -316,13 +316,19 @@ class LevelBot(commands.Cog):
         sorted_users = c.fetchall()
         conn.close()
         
-        # Create the "View leaderboard" button pointing to RENDER
+        # Construct the URL using the SERVER ID, not the name
+        dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
+        # Fix the double slash issue by ensuring no trailing slash in env var
+        clean_dashboard_url = dashboard_url.rstrip('/')
+        web_url = f"{clean_dashboard_url}/leaderboard/{guild_id}"
+        
+        # Create the "View leaderboard" button
         view = discord.ui.View()
         view.add_item(
             discord.ui.Button(
                 label="View leaderboard",
                 style=discord.ButtonStyle.link,
-                url=f"https://vodevsapi.onrender.com/leaderboard/{guild_id}",
+                url=web_url,
                 emoji="📊"
             )
         )
@@ -704,20 +710,102 @@ class LevelBot(commands.Cog):
         
         await ctx.send(embed=embed)
 
+    # ==========================================
+    # MASSIVE UPGRADE: ADDXP JSON + FILE SUPPORT
+    # ==========================================
+
     @commands.command(name="addxp")
     @commands.has_permissions(administrator=True)
-    async def add_xp(self, ctx, member: discord.Member, amount: float):
+    async def add_xp(self, ctx, member_or_json: str = None, amount: float = None):
         """
-        [Admin] Manually adds XP to a user. Accepts decimals.
-        Usage: !addxp @User 500  or  !addxp @User 0.18
+        [Admin] Manually adds XP to a user, a JSON list, or a file attachment.
+        Usage: 
+            !addxp @User 500
+            !addxp json {"user_id": 500, "user_id2": 300}
+            !addxp file (attach a .txt or .json file)
         """
+        # ==========================================
+        # OPTION 1: Handle File Attachments
+        # ==========================================
+        if ctx.message.attachments:
+            attachment = ctx.message.attachments[0]
+            if attachment.filename.endswith(('.txt', '.json')):
+                await ctx.send("⏳ Processing JSON file...")
+                file_content = await attachment.read()
+                json_text = file_content.decode('utf-8')
+                
+                # Remove Markdown code blocks if present
+                if json_text.startswith("```"):
+                    lines = json_text.split("\n")
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines[-1].strip() == "```":
+                        lines = lines[:-1]
+                    json_text = "\n".join(lines)
+                    
+                try:
+                    data = json.loads(json_text.strip())
+                    if isinstance(data, dict):
+                        processed = 0
+                        for user_id, xp in data.items():
+                            if isinstance(xp, (int, float)) and xp > 0:
+                                await self._add_xp_to_db(ctx.guild.id, user_id, xp)
+                                processed += 1
+                        await ctx.send(f"✅ Processed file. Added XP to **{processed}** users. (No pings sent)")
+                    else:
+                        await ctx.send("❌ Invalid JSON format. Must be a dictionary of `user_id: xp`.")
+                except json.JSONDecodeError:
+                    await ctx.send("❌ Failed to parse JSON from the attached file.")
+                return
+            else:
+                return await ctx.send("❌ Please attach a `.txt` or `.json` file.")
+
+        # ==========================================
+        # OPTION 2: Handle "json" text command
+        # ==========================================
+        if member_or_json is not None and member_or_json.lower() == "json":
+            if amount is None:
+                return await ctx.send("❌ Missing JSON data. Example: `!addxp json {\"123456789\": 500}`")
+            
+            # amount is actually the JSON string passed as the "amount" argument
+            json_str = amount
+            try:
+                data = json.loads(json_str)
+                if isinstance(data, dict):
+                    processed = 0
+                    for user_id, xp in data.items():
+                        if isinstance(xp, (int, float)) and xp > 0:
+                            await self._add_xp_to_db(ctx.guild.id, user_id, xp)
+                            processed += 1
+                    await ctx.send(f"✅ Added XP to **{processed}** users from JSON list. (No pings sent)")
+                else:
+                    await ctx.send("❌ Invalid JSON. Must be a dictionary of `user_id: xp`.")
+            except json.JSONDecodeError:
+                await ctx.send("❌ Failed to parse JSON.")
+            return
+
+        # ==========================================
+        # OPTION 3: Single User Addition (No Pings)
+        # ==========================================
+        if member_or_json is None or amount is None:
+            return await ctx.send("❌ Usage: `!addxp @User 500` or `!addxp json {\"id\": xp}` or attach a file.")
+
+        # Convert member_or_json to a member object
+        try:
+            converter = commands.MemberConverter()
+            member = await converter.convert(ctx, member_or_json)
+        except:
+            return await ctx.send("❌ Invalid user. Please mention a user or provide a valid User ID.")
+
         if amount <= 0:
             return await ctx.send("❌ You must add a positive amount of XP!")
 
-        guild_id = str(ctx.guild.id)
-        user_id = str(member.id)
+        # Add XP silently (No pings)
+        await self._add_xp_to_db(ctx.guild.id, str(member.id), amount)
+        await ctx.send(f"✅ Successfully added **{amount} XP** to `{member.display_name}`. (No ping sent)")
 
-        # SQLite logic
+    async def _add_xp_to_db(self, guild_id, user_id, amount):
+        """Internal helper to add XP to the database without pinging."""
         conn = sqlite3.connect(self.db_file)
         c = conn.cursor()
         c.execute("SELECT xp FROM levels WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
@@ -732,23 +820,6 @@ class LevelBot(commands.Cog):
         c.execute("UPDATE levels SET xp = ? WHERE guild_id = ? AND user_id = ?", (new_xp, guild_id, user_id))
         conn.commit()
         conn.close()
-
-        # Get new level after adding XP
-        new_level = self.get_level_from_xp(new_xp)
-
-        # Check if they leveled up from the manual XP and assign role if needed
-        if new_level in self.levels:
-            role_name = f"Level {new_level}"
-            role = discord.utils.get(ctx.guild.roles, name=role_name)
-            if role:
-                try:
-                    await member.add_roles(role)
-                    await ctx.send(f"🎉 {member.mention} received {amount} XP and **Leveled Up to Level {new_level}**! They have been given the {role.mention} role.")
-                except discord.Forbidden:
-                    await ctx.send(f"✅ Added {amount} XP to {member.mention}. They reached Level {new_level}, but I couldn't assign the role (missing permissions).")
-                return
-
-        await ctx.send(f"✅ Successfully added **{amount} XP** to {member.mention}!\nThey are now at Level {new_level} with {new_xp:,} total XP.")
 
     @commands.command(name="removexp")
     @commands.has_permissions(administrator=True)
@@ -771,14 +842,14 @@ class LevelBot(commands.Cog):
 
         if not result:
             conn.close()
-            return await ctx.send(f"❌ {member.mention} doesn't have any XP to remove!")
+            return await ctx.send(f"❌ User doesn't have any XP to remove!")
 
         current_xp = result[0]
 
         # Prevent removing more XP than they have (can't go below 0)
         if current_xp < amount:
             conn.close()
-            return await ctx.send(f"❌ {member.mention} only has {current_xp:,} XP. You cannot remove {amount} XP!")
+            return await ctx.send(f"❌ User only has {current_xp:,} XP. You cannot remove {amount} XP!")
 
         new_xp = round(current_xp - amount)
         if new_xp < 0:
@@ -791,7 +862,7 @@ class LevelBot(commands.Cog):
         # Get new level after removing XP
         new_level = self.get_level_from_xp(new_xp)
         
-        await ctx.send(f"✅ Successfully removed **{amount} XP** from {member.mention}!\nThey are now at Level {new_level} with {new_xp:,} total XP.")
+        await ctx.send(f"✅ Successfully removed **{amount} XP** from `{member.display_name}`. (No ping sent)\nThey are now at Level {new_level} with {new_xp:,} total XP.")
 
     # ==========================================
     # NEW COMMAND: DELETE OLD JSON DATA
@@ -843,7 +914,8 @@ class LevelBot(commands.Cog):
         user_id = str(message.author.id)
         
         # 1. Check if user or their role bypasses the cooldown
-        is_bypassed = False        if user_id in self.bypass_users:
+        is_bypassed = False
+        if user_id in self.bypass_users:
             is_bypassed = True
         else:
             for role in message.author.roles:
