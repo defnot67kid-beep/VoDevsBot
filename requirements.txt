@@ -2,8 +2,8 @@ discord.py>=2.3.0
 aiohttp>=3.9.0
 python-dotenv>=1.0.0
 pillow
-flask  <-- Add this!
-requests  <-- Add this!
+flask
+requests
 flask-basicauth
 authlib
 flask-session
