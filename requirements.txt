@@ -7,3 +7,4 @@ requests
 flask-basicauth
 authlib
 flask-session
+pymongo
