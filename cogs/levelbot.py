@@ -8,7 +8,7 @@ import random
 import aiohttp
 import io
 
-# ==========================================
+# ========================================== 
 # SMART BUTTON VIEW (Never disabled, works for everyone)
 # ==========================================
 class CardButton(discord.ui.View):
