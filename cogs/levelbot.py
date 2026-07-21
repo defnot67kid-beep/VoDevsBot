@@ -320,7 +320,7 @@ class LevelBot(commands.Cog):
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         # Fix the double slash issue by ensuring no trailing slash in env var
         clean_dashboard_url = dashboard_url.rstrip('/')
-        web_url = f"{clean_dashboard_url}/leaderboard/{guild_id}"
+        web_url = f"https://vodevsapi.onrender.com{guild_id}"
         
         # Create the "View leaderboard" button
         view = discord.ui.View()
