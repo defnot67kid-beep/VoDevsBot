@@ -293,7 +293,7 @@ class LevelBot(commands.Cog):
             await ctx.send(f"❌ Error fetching rank card: {e}")
 
     # ==========================================
-    # BEAUTIFUL LEADERBOARD COMMAND (With Button to Web Leaderboard)
+    # BEAUTIFUL LEADERBOARD COMMAND (With Button to Render API)
     # ==========================================
 
     @commands.command(name="leaderboard")
@@ -316,19 +316,13 @@ class LevelBot(commands.Cog):
         sorted_users = c.fetchall()
         conn.close()
         
-        # Construct the URL using the SERVER ID, not the name
-        dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
-        # Fix the double slash issue by ensuring no trailing slash in env var
-        clean_dashboard_url = dashboard_url.rstrip('/')
-        web_url = f"https://vodevsapi.onrender.com/{guild_id}"
-        
-        # Create the "View leaderboard" button
+        # Create the "View leaderboard" button pointing to RENDER
         view = discord.ui.View()
         view.add_item(
             discord.ui.Button(
                 label="View leaderboard",
                 style=discord.ButtonStyle.link,
-                url=web_url,
+                url=f"https://vodevsapi.onrender.com/leaderboard/{guild_id}",
                 emoji="📊"
             )
         )
@@ -800,40 +794,6 @@ class LevelBot(commands.Cog):
         await ctx.send(f"✅ Successfully removed **{amount} XP** from {member.mention}!\nThey are now at Level {new_level} with {new_xp:,} total XP.")
 
     # ==========================================
-    # DASHBOARD API ROUTE (Serves Leaderboard Data)
-    # ==========================================
-    @commands.command(name="api_leaderboard")
-    @commands.is_owner() # Only the bot owner can trigger this manually for testing
-    async def api_leaderboard(self, ctx, guild_id: str):
-        """
-        [Owner/System] Internal API for the Dashboard to get leaderboard data.
-        Usage: !api_leaderboard 1526703518818373743
-        """
-        conn = sqlite3.connect(self.db_file)
-        c = conn.cursor()
-        c.execute("SELECT user_id, xp FROM levels WHERE guild_id = ? ORDER BY xp DESC LIMIT 100", (guild_id,))
-        sorted_users = c.fetchall()
-        conn.close()
-
-        if not sorted_users:
-            return await ctx.send("No data found.")
-
-        # Format the data exactly like the dashboard needs it
-        data = []
-        for user_id, xp in sorted_users:
-            # Calculate level using your existing math
-            level = self.get_level_from_xp(xp)
-            data.append({
-                "user_id": user_id,
-                "xp": xp,
-                "level": level
-            })
-
-        # Return the JSON data as a message (The dashboard will parse this later)
-        import json
-        await ctx.send(json.dumps(data, indent=4))
-
-    # ==========================================
     # NEW COMMAND: DELETE OLD JSON DATA
     # ==========================================
 
@@ -883,8 +843,7 @@ class LevelBot(commands.Cog):
         user_id = str(message.author.id)
         
         # 1. Check if user or their role bypasses the cooldown
-        is_bypassed = False
-        if user_id in self.bypass_users:
+        is_bypassed = False        if user_id in self.bypass_users:
             is_bypassed = True
         else:
             for role in message.author.roles:
