@@ -494,6 +494,7 @@ def api_leaderboard(guild_id):
     return jsonify(data)
 
 def run_flask():
+    # IMPORTANT: Run on 0.0.0.0 and port 5000
     port = int(os.environ.get("API_PORT", 5000))
     app.run(host="0.0.0.0", port=port)
 
