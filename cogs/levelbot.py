@@ -280,34 +280,54 @@ class LevelBot(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error fetching rank card: {e}")
 
+    # ==========================================
+    # BEAUTIFUL LEADERBOARD COMMAND (With Button to Web Leaderboard)
+    # ==========================================
+
     @commands.command(name="leaderboard")
     async def leaderboard(self, ctx):
-        """Show the top 10 levelers in the server"""
+        """Show the top 10 levelers in the server with a web button"""
         guild_id = str(ctx.guild.id)
         
         if guild_id not in self.level_data or not self.level_data[guild_id]:
             return await ctx.send("❌ No level data for this server yet!")
         
-        # Sort users by XP
-        sorted_users = sorted(self.level_data[guild_id].items(), key=lambda x: x[1]["xp"], reverse=True)[:10]
+        # Get server name, remove spaces for URL
+        server_name = ctx.guild.name.replace(" ", "")
+        dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         
-        embed = discord.Embed(
-            title="🏆 Server Leaderboard",
-            color=discord.Color.gold()
+        # Create the "View leaderboard" button
+        view = discord.ui.View()
+        view.add_item(
+            discord.ui.Button(
+                label="View leaderboard",
+                style=discord.ButtonStyle.link,
+                url=f"{dashboard_url}/leaderboard/{server_name}",
+                emoji="📊"
+            )
         )
         
+        sorted_users = sorted(self.level_data[guild_id].items(), key=lambda x: x[1]["xp"], reverse=True)[:10]
+        
+        # Build a beautiful embed like Image 1
+        embed = discord.Embed(
+            title=f"{ctx.guild.name}",
+            color=discord.Color.dark_embed()
+        )
+        
+        leaderboard_text = ""
         for i, (user_id, data) in enumerate(sorted_users, 1):
             member = ctx.guild.get_member(int(user_id))
             if member:
                 level = self.get_level_from_xp(data["xp"])
                 medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"#{i}"
-                embed.add_field(
-                    name=f"{medal} {member.display_name}",
-                    value=f"Level {level} • {data['xp']:,} XP",
-                    inline=False
-                )
+                # Format exactly like the screenshot
+                leaderboard_text += f"**{medal}** • `@{member.display_name}` • **LVL: {level}**\n"
         
-        await ctx.send(embed=embed)
+        embed.description = leaderboard_text
+        embed.set_footer(text=f"{len(self.level_data[guild_id])} members • Overall XP")
+        
+        await ctx.send(embed=embed, view=view)
 
     # ==========================================
     # ADMIN SETTINGS COMMANDS
