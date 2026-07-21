@@ -5,6 +5,7 @@ import os
 import shutil
 import datetime
 import asyncio
+import base64
 
 class Settings(commands.Cog):
     def __init__(self, bot):
@@ -20,26 +21,28 @@ class Settings(commands.Cog):
             "giveaway_data.json",
             "economy_data.json",
         ]
+        # Add the SQLite database to the backup list!
+        self.important_db_files = ["level_data.db"]
 
     @commands.command(name="backup")
     @commands.has_permissions(administrator=True)
     async def backup_settings(self, ctx):
         """
         [Admin] Saves ALL bot settings/data into one backup file AND shows you the raw text.
-        Usage: !backup
         """
         await ctx.send("⏳ Creating a full backup of all bot data...")
         
         backup_data = {
             "timestamp": datetime.datetime.now().isoformat(),
             "server_id": str(ctx.guild.id),
-            "files": {}
+            "files": {},
+            "db_files": {}  # New section for SQLite databases
         }
 
         found_files = 0
         missing_files = 0
 
-        # Loop through all important JSON files
+        # Loop through important JSON files
         for file_name in self.important_files:
             if os.path.exists(file_name):
                 try:
@@ -49,6 +52,20 @@ class Settings(commands.Cog):
                         found_files += 1
                 except Exception as e:
                     await ctx.send(f"⚠️ Error reading {file_name}: {e}")
+            else:
+                missing_files += 1
+
+        # NEW: Loop through SQLite DB files
+        for db_name in self.important_db_files:
+            if os.path.exists(db_name):
+                try:
+                    with open(db_name, 'rb') as f:
+                        # Encode binary SQLite as base64 to store in JSON
+                        content = base64.b64encode(f.read()).decode('utf-8')
+                        backup_data["db_files"][db_name] = content
+                        found_files += 1
+                except Exception as e:
+                    await ctx.send(f"⚠️ Error reading {db_name}: {e}")
             else:
                 missing_files += 1
 
@@ -68,23 +85,19 @@ class Settings(commands.Cog):
             embed.add_field(name="📁 Files Backed Up", value=str(found_files), inline=True)
             embed.add_field(name="📁 Files Missing/Skipped", value=str(missing_files), inline=True)
             
-            # Convert backup to a formatted string so they can copy it
             backup_json_string = json.dumps(backup_data, indent=4)
             
-            # Send the backup as a file (downloadable) AND as a text block (copy-pasteable)
             await ctx.send(
                 embed=embed, 
                 file=discord.File(self.backup_file)
             )
             
-            # Send the RAW JSON text so they can save it anywhere
             await ctx.send(
                 "📋 **Copy this text below and save it somewhere safe!**\n" +
                 "If you lose all your files, use `!recover` and paste this text back (or attach it as a file!).",
                 ephemeral=False
             )
             
-            # Split into chunks if it's too long for Discord (2000 char limit)
             if len(backup_json_string) > 1900:
                 for i in range(0, len(backup_json_string), 1900):
                     await ctx.send(f"```json\n{backup_json_string[i:i+1900]}\n```")
@@ -99,16 +112,13 @@ class Settings(commands.Cog):
     async def recover_from_paste(self, ctx, *, json_text: str = None):
         """
         [Admin] Pastes the JSON text OR attaches the .txt/.json file from !backup to restore EVERYTHING.
-        Usage: !recover (paste text) OR !recover (attach .txt file)
         """
         await ctx.send("⏳ Processing recovery data...")
 
-        # Check if there's a text file attached to the message
         if ctx.message.attachments:
             attachment = ctx.message.attachments[0]
             if attachment.filename.endswith(('.txt', '.json')):
                 try:
-                    # Read the attached file directly
                     file_content = await attachment.read()
                     json_text = file_content.decode('utf-8')
                 except Exception as e:
@@ -116,12 +126,10 @@ class Settings(commands.Cog):
             else:
                 return await ctx.send("❌ Please attach a `.txt` or `.json` file from `!backup`.")
 
-        # If no attachment, check if they typed the text in the message
         elif json_text is None:
-            return await ctx.send("❌ You must either paste the JSON text right after the command, OR attach the `message.txt` file!\nExample: `!recover` (and attach the file)")
+            return await ctx.send("❌ You must either paste the JSON text right after the command, OR attach the `message.txt` file!")
 
         try:
-            # Remove Markdown code blocks if the user pasted ```json ... ```
             if json_text.startswith("```"):
                 lines = json_text.split("\n")
                 if lines[0].startswith("```"):
@@ -130,22 +138,18 @@ class Settings(commands.Cog):
                     lines = lines[:-1]
                 json_text = "\n".join(lines)
 
-            # Parse the JSON
             backup_data = json.loads(json_text.strip())
 
-            # Validate it has the right structure
             if "files" not in backup_data:
                 return await ctx.send("❌ Invalid backup format! Make sure you copied the full output from `!backup`.")
 
             restored_count = 0
             failed_count = 0
 
-            # Loop through and write every single file back
+            # Restore JSON Files
             for file_name, content in backup_data["files"].items():
                 try:
-                    # Ensure the content is valid JSON before writing
-                    json.dumps(content)  # Validate it
-                    
+                    json.dumps(content)
                     with open(file_name, 'w', encoding='utf-8') as f:
                         json.dump(content, f, indent=4)
                     restored_count += 1
@@ -153,7 +157,20 @@ class Settings(commands.Cog):
                     failed_count += 1
                     await ctx.send(f"⚠️ Failed to restore {file_name}: {e}")
 
-            # Also recreate the local bot_backup.json file so !restore works later
+            # NEW: Restore SQLite DB Files
+            if "db_files" in backup_data:
+                for db_name, encoded_content in backup_data["db_files"].items():
+                    try:
+                        # Decode base64 back to binary and write it
+                        binary_data = base64.b64decode(encoded_content)
+                        with open(db_name, 'wb') as f:
+                            f.write(binary_data)
+                        restored_count += 1
+                    except Exception as e:
+                        failed_count += 1
+                        await ctx.send(f"⚠️ Failed to restore {db_name}: {e}")
+
+            # Recreate the local bot_backup.json file
             try:
                 with open(self.backup_file, 'w', encoding='utf-8') as f:
                     json.dump(backup_data, f, indent=4)
@@ -172,26 +189,18 @@ class Settings(commands.Cog):
 
             await ctx.send(embed=embed)
 
-            # If AutoRR was restored, remind them to reload it
-            if "level_data.json" in backup_data["files"]:
-                await ctx.send("💡 **Tip:** If you restored Level Data, run `!reload levelbot` to apply it.")
-            if "level_roles.json" in backup_data["files"]:
-                await ctx.send("💡 **Tip:** If you restored Level Roles, run `!reload levelbot` to apply them.")
-            if "welcome_data.json" in backup_data["files"]:
-                await ctx.send("💡 **Tip:** If you restored Welcome Data, run `!reload welcome` to apply it.")
+            if "level_data.db" in backup_data.get("db_files", {}):
+                await ctx.send("💡 **Tip:** SQLite database restored! Run `!level` to check your rank.")
 
         except json.JSONDecodeError:
-            await ctx.send("❌ **Invalid JSON!** Make sure you copied the entire text from the `!backup` command properly. It must start with `{` and end with `}`.")
+            await ctx.send("❌ **Invalid JSON!** Make sure you copied the entire text from the `!backup` command properly.")
         except Exception as e:
             await ctx.send(f"❌ Failed to recover backup: {e}")
 
     @commands.command(name="listbackup")
     @commands.has_permissions(administrator=True)
     async def list_backup_files(self, ctx):
-        """
-        [Admin] Shows which files are stored in the current backup.
-        Usage: !listbackup
-        """
+        """Shows which files are stored in the current backup."""
         if not os.path.exists(self.backup_file):
             return await ctx.send("❌ No backup file found! Run `!backup` first.")
 
@@ -206,9 +215,14 @@ class Settings(commands.Cog):
             )
             
             files_list = list(backup_data.get("files", {}).keys())
+            db_list = list(backup_data.get("db_files", {}).keys())
+            
             if files_list:
-                embed.add_field(name="📁 Files in Backup", value="\n".join(files_list), inline=False)
-            else:
+                embed.add_field(name="📁 JSON Files", value="\n".join(files_list), inline=False)
+            if db_list:
+                embed.add_field(name="🗄️ SQLite Databases", value="\n".join(db_list), inline=False)
+            
+            if not files_list and not db_list:
                 embed.add_field(name="📁 Files in Backup", value="No files found in backup.", inline=False)
             
             embed.set_footer(text=f"Backup created at: {backup_data.get('timestamp', 'Unknown')}")
@@ -217,82 +231,6 @@ class Settings(commands.Cog):
 
         except Exception as e:
             await ctx.send(f"❌ Failed to read backup: {e}")
-
-    @commands.command(name="autobackup")
-    @commands.has_permissions(administrator=True)
-    async def auto_backup_toggle(self, ctx, status: str = None):
-        """
-        [Admin] Enables or disables automatic hourly backups.
-        Usage: !autobackup on / !autobackup off
-        """
-        if status is None:
-            return await ctx.send("❌ Please specify `on` or `off`. Example: `!autobackup on`")
-
-        guild_id = str(ctx.guild.id)
-        config_file = "autobackup_config.json"
-        
-        # Load existing config
-        config = {}
-        if os.path.exists(config_file):
-            with open(config_file, 'r') as f:
-                config = json.load(f)
-
-        if status.lower() == "on":
-            config[guild_id] = True
-            with open(config_file, 'w') as f:
-                json.dump(config, f, indent=4)
-            await ctx.send("✅ **Auto-backup ENABLED**! The bot will automatically backup all data every 1 hour.")
-            
-            # Start the background task
-            self.bot.loop.create_task(self.auto_backup_task(ctx.guild.id))
-            
-        elif status.lower() == "off":
-            if guild_id in config:
-                del config[guild_id]
-                with open(config_file, 'w') as f:
-                    json.dump(config, f, indent=4)
-            await ctx.send("✅ **Auto-backup DISABLED**.")
-            
-        else:
-            await ctx.send("❌ Invalid option. Use `on` or `off`.")
-
-    async def auto_backup_task(self, guild_id):
-        """Background task that automatically backs up data every hour"""
-        await self.bot.wait_until_ready()
-        while not self.bot.is_closed():
-            # Check if auto-backup is still enabled
-            config_file = "autobackup_config.json"
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    config = json.load(f)
-                if str(guild_id) not in config or not config[str(guild_id)]:
-                    break  # Stop the loop if disabled
-            
-            # Perform the backup
-            backup_data = {
-                "timestamp": datetime.datetime.now().isoformat(),
-                "server_id": str(guild_id),
-                "files": {}
-            }
-            
-            for file_name in self.important_files:
-                if os.path.exists(file_name):
-                    try:
-                        with open(file_name, 'r', encoding='utf-8') as f:
-                            content = json.load(f)
-                            backup_data["files"][file_name] = content
-                    except:
-                        pass
-            
-            try:
-                with open(self.backup_file, 'w', encoding='utf-8') as f:
-                    json.dump(backup_data, f, indent=4)
-                print(f"[Auto-Backup] Successfully backed up data at {datetime.datetime.now()}")
-            except Exception as e:
-                print(f"[Auto-Backup] Failed: {e}")
-            
-            # Wait 1 hour (3600 seconds)
-            await asyncio.sleep(3600)
 
 async def setup(bot):
     await bot.add_cog(Settings(bot))
