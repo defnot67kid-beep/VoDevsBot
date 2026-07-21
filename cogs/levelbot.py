@@ -316,9 +316,11 @@ class LevelBot(commands.Cog):
         sorted_users = c.fetchall()
         conn.close()
         
-        # Get server name, remove spaces for URL
-        server_name = ctx.guild.name.replace(" ", "")
+        # Construct the URL using the SERVER ID, not the name
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
+        # Fix the double slash issue by ensuring no trailing slash in env var
+        clean_dashboard_url = dashboard_url.rstrip('/')
+        web_url = f"{clean_dashboard_url}/leaderboard/{guild_id}"
         
         # Create the "View leaderboard" button
         view = discord.ui.View()
@@ -326,7 +328,7 @@ class LevelBot(commands.Cog):
             discord.ui.Button(
                 label="View leaderboard",
                 style=discord.ButtonStyle.link,
-                url=f"{dashboard_url}/leaderboard/{server_name}",
+                url=web_url,
                 emoji="📊"
             )
         )
