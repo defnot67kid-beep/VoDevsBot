@@ -10,11 +10,11 @@ import aiohttp
 import io
 
 # ==========================================
-# MONGODB SETUP (Uses Environment Variable)
+# MONGODB SETUP
 # ==========================================
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
-    raise ValueError("❌ MONGO_URI environment variable is not set! Please add it in Railway.")
+    raise ValueError("❌ MONGO_URI environment variable is not set!")
 
 client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
@@ -23,7 +23,7 @@ roles_collection = db["roles"]
 config_collection = db["config"]
 
 # ==========================================
-# SMART BUTTON VIEW (Never disabled, works for everyone)
+# SMART BUTTON VIEW
 # ==========================================
 class CardButton(discord.ui.View):
     def __init__(self, dashboard_url):
@@ -32,14 +32,9 @@ class CardButton(discord.ui.View):
 
     @discord.ui.button(label="/card", style=discord.ButtonStyle.primary, emoji="🎨")
     async def card_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Get the ID of whoever clicked the button right now
         clicker_id = str(interaction.user.id)
         guild_id = str(interaction.guild.id)
-        
-        # Construct the link for THIS SPECIFIC USER, not the original card owner
         specific_url = f"{self.dashboard_url}/dashboard/{guild_id}/{clicker_id}"
-        
-        # Send the link ephemerally (Only they can see it)
         await interaction.response.send_message(
             f"🔗 Click this link to edit **your** rank card:\n{specific_url}",
             ephemeral=True
@@ -48,25 +43,14 @@ class CardButton(discord.ui.View):
 class LevelBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        
-        # Cooldown dictionary (user_id -> last_message_time)
         self.xp_cooldowns = {}
-        
-        # Default slowmode (45 seconds). Can be changed by admins.
         self.COOLDOWN_SECONDS = 45
-        
-        # Bypass list (User IDs and Role IDs)
         self.bypass_users = set()
         self.bypass_roles = set()
-        
-        # Load bypass config & channel config
         self.load_config()
-        
-        # Define the level progression (STOPS AT 100)
         self.levels = [2, 5, 10, 20, 35, 50, 60, 70, 100]
 
     def load_config(self):
-        """Load cooldown, bypass, and channel config from MongoDB"""
         doc = config_collection.find_one({"_id": "bot_config"})
         if doc:
             self.COOLDOWN_SECONDS = doc.get("cooldown_seconds", 45)
@@ -75,7 +59,6 @@ class LevelBot(commands.Cog):
             self.level_channel_id = doc.get("level_channel_id", 1526989768595083384)
             
     def save_config(self):
-        """Save cooldown, bypass, and channel config to MongoDB"""
         config_collection.update_one(
             {"_id": "bot_config"},
             {"$set": {
@@ -88,104 +71,55 @@ class LevelBot(commands.Cog):
         )
 
     def get_role_color(self, level):
-        """Returns a color based on the level"""
         colors = {
-            2: discord.Color.from_rgb(46, 204, 113),   # Green
-            5: discord.Color.from_rgb(52, 152, 219),   # Blue
-            10: discord.Color.from_rgb(155, 89, 182),  # Purple
-            20: discord.Color.from_rgb(230, 126, 34),  # Orange
-            35: discord.Color.from_rgb(231, 76, 60),   # Red
-            50: discord.Color.from_rgb(241, 196, 15),  # Yellow/Gold
-            60: discord.Color.from_rgb(26, 188, 156),  # Teal
-            70: discord.Color.from_rgb(142, 68, 173),  # Deep Purple
-            100: discord.Color.from_rgb(192, 57, 43),  # Dark Red
+            2: discord.Color.from_rgb(46, 204, 113), 5: discord.Color.from_rgb(52, 152, 219),
+            10: discord.Color.from_rgb(155, 89, 182), 20: discord.Color.from_rgb(230, 126, 34),
+            35: discord.Color.from_rgb(231, 76, 60), 50: discord.Color.from_rgb(241, 196, 15),
+            60: discord.Color.from_rgb(26, 188, 156), 70: discord.Color.from_rgb(142, 68, 173),
+            100: discord.Color.from_rgb(192, 57, 43)
         }
         return colors.get(level, discord.Color.default())
 
     def get_role_permissions(self, level):
-        """
-        Returns permission overwrites based on the level.
-        - Level 2 & 5: Base only (Read/Send)
-        - Level 10: Can send GIFs, images, files (attach_files) BUT no embed
-        - Level 20: Can embed links, which allows GIF embeds + bot commands
-        """
         perms = discord.Permissions()
-        
-        # BASE PERMS FOR ALL (Level 2+)
         perms.read_messages = True
         perms.send_messages = True
         perms.read_message_history = True
-        
-        # Level 10: Can send images, GIFs, files (as attachments)
-        if level >= 10:
-            perms.attach_files = True
-        
-        # Level 20: Can EMBED links (GIFs play inline) + use bot commands
-        if level >= 20:
-            perms.embed_links = True
-        
+        if level >= 10: perms.attach_files = True
+        if level >= 20: perms.embed_links = True
         return perms
 
-    # ==========================================
-    # XP CALCULATION (Text + File Size + ROUNDING)
-    # ==========================================
-    
     def calculate_xp_gain(self, message):
-        """Calculate XP based on text length and attached file sizes. Rounded to nearest integer."""
-        
-        # 1. XP FROM TEXT (1-5 XP per character, randomized)
         content = message.content
         length = len(content)
-        
-        # Base XP for just sending a message (small)
         base_xp = 5
-        
-        # 1-5 XP for EVERY single character in the message!
         total_char_xp = 0
         for _ in range(length):
             total_char_xp += random.randint(1, 5)
-            
         total_xp = base_xp + total_char_xp
-        
-        # 2. XP FROM ATTACHMENTS (0.001 XP per Kilobyte)
         if message.attachments:
             for attachment in message.attachments:
-                # Get size in bytes
-                size_bytes = attachment.size
-                # Convert to Kilobytes (KB)
-                size_kb = size_bytes / 1024
-                # Award 0.001 XP per KB
+                size_kb = attachment.size / 1024
                 file_xp = size_kb * 0.001
                 total_xp += file_xp
-        
-        # Safety cap: Max 1,000 XP per message (stops massive paste/image exploits)
-        if total_xp > 1000:
-            total_xp = 1000
-            
-        # ROUND TO THE NEAREST INTEGER
+        if total_xp > 1000: total_xp = 1000
         return round(total_xp)
 
     def get_xp_needed(self, level):
-        """
-        ACCURATE MATH: 
-        Level 1 = 1,000 XP
-        Level 100 = 1,000,000 XP
-        Formula: 1000 * (level ^ 1.5)
-        """
-        if level <= 0:
-            return 0
+        if level <= 0: return 0
         return int(1000 * (level ** 1.5))
 
     def get_level_from_xp(self, xp):
-        """Calculate what level a user is based on total XP"""
         level = 0
         while self.get_xp_needed(level + 1) <= xp:
             level += 1
         return level
 
     def get_rank(self, guild_id, user_id):
-        """Helper to get the user's rank on the leaderboard"""
-        # MongoDB aggregation to get the user's rank
+        # STRICTLY enforce strings so it matches the database exactly
+        guild_id = str(guild_id)
+        user_id = str(user_id)
+        
         pipeline = [
             {"$match": {"guild_id": guild_id}},
             {"$sort": {"xp": -1}},
@@ -199,33 +133,23 @@ class LevelBot(commands.Cog):
             return result[0]["rank"]
         return 0
 
-    # ==========================================
-    # FINAL !LEVEL COMMAND (Sends RAW Image + Button)
-    # ==========================================
-
     @commands.command(name="level", aliases=["lvl"])
     async def level(self, ctx, *, member: discord.Member = None):
-        """Check your current level and XP progress. Usage: !level, !level @User, !level Name"""
-        if member is None:
-            member = ctx.author
-        
+        if member is None: member = ctx.author
         guild_id = str(ctx.guild.id)
         user_id = str(member.id)
         
-        # Strip emojis from the display name before sending it!
         raw_name = member.display_name
         clean_name = ''.join(c for c in raw_name if c.isalnum() or c in (' ', '-', '_', '.', '#'))
         
-        # Get the XP data from this user (MongoDB)
+        # STRICTLY enforce strings here as well
         doc = levels_collection.find_one({"guild_id": guild_id, "user_id": user_id})
-        
         if not doc:
             return await ctx.send(f"❌ {member.mention} hasn't chatted enough to have a rank yet!")
         
         current_xp = doc["xp"]
         current_level = self.get_level_from_xp(current_xp)
         
-        # Calculate progress to next level
         next_level_xp = self.get_xp_needed(current_level + 1)
         prev_level_xp = self.get_xp_needed(current_level)
         xp_in_level = current_xp - prev_level_xp
@@ -253,15 +177,9 @@ class LevelBot(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error fetching rank card: {e}")
 
-    # ==========================================
-    # BEAUTIFUL LEADERBOARD COMMAND (With Button to Web Leaderboard)
-    # ==========================================
-
     @commands.command(name="leaderboard")
     async def leaderboard(self, ctx):
-        """Show the top 10 levelers in the server with a web button"""
         guild_id = str(ctx.guild.id)
-        
         count = levels_collection.count_documents({"guild_id": guild_id})
         if count == 0:
             return await ctx.send("❌ No level data for this server yet!")
@@ -296,10 +214,6 @@ class LevelBot(commands.Cog):
         embed.set_footer(text=f"{count} members • Overall XP")
         
         await ctx.send(embed=embed, view=view)
-
-    # ==========================================
-    # ADMIN SETTINGS COMMANDS
-    # ==========================================
 
     @commands.command(name="xpslmset")
     @commands.has_permissions(administrator=True)
@@ -375,10 +289,6 @@ class LevelBot(commands.Cog):
         self.level_channel_id = channel.id
         self.save_config()
         await ctx.send(f"✅ Level-Up announcements sent to {channel.mention}!")
-
-    # ==========================================
-    # ADMIN ROLE SETUP COMMANDS
-    # ==========================================
 
     @commands.command(name="autosetuplevelroles")
     @commands.has_permissions(administrator=True)
@@ -484,20 +394,9 @@ class LevelBot(commands.Cog):
                 embed.add_field(name=f"Level {level}", value=f"{role.mention}\n*{', '.join(perm_list) if perm_list else 'Base'}*", inline=False)
         await ctx.send(embed=embed)
 
-    # ==========================================
-    # ADDXP JSON + FILE SUPPORT (FULLY UPDATED FOR MONGODB)
-    # ==========================================
-
     @commands.command(name="addxp")
     @commands.has_permissions(administrator=True)
     async def add_xp(self, ctx, member_or_json: str = None, amount: float = None):
-        """
-        [Admin] Manually adds XP to a user, a JSON list, or a file attachment.
-        Usage: 
-            !addxp @User 500
-            !addxp json {"user_id": 500, "user_id2": 300}
-            !addxp file (attach a .txt or .json file)
-        """
         # ==========================================
         # OPTION 1: Handle File Attachments
         # ==========================================
@@ -574,6 +473,10 @@ class LevelBot(commands.Cog):
 
     async def _add_xp_to_db(self, guild_id, user_id, amount):
         """Internal helper to add XP to MongoDB without pinging."""
+        # STRICTLY FORCE THEM TO STRINGS TO PREVENT DUPLICATES
+        guild_id = str(guild_id)
+        user_id = str(user_id)
+        
         levels_collection.update_one(
             {"guild_id": guild_id, "user_id": user_id},
             {"$inc": {"xp": amount}},
@@ -631,10 +534,6 @@ class LevelBot(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Failed to delete the file: {e}")
 
-    # ==========================================
-    # XP LISTENER (The Core System - MongoDB version)
-    # ==========================================
-
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot: return
@@ -678,8 +577,5 @@ class LevelBot(commands.Cog):
                     await level_channel.send(embed=embed)
                 except: pass
 
-# ==========================================
-# SETUP FUNCTION
-# ==========================================
 async def setup(bot):
     await bot.add_cog(LevelBot(bot))
