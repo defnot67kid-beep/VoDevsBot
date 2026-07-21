@@ -485,12 +485,19 @@ class LevelBot(commands.Cog):
         await ctx.send(embed=embed)
 
     # ==========================================
-    # ADDXP JSON + FILE SUPPORT
+    # ADDXP JSON + FILE SUPPORT (FULLY UPDATED FOR MONGODB)
     # ==========================================
 
     @commands.command(name="addxp")
     @commands.has_permissions(administrator=True)
     async def add_xp(self, ctx, member_or_json: str = None, amount: float = None):
+        """
+        [Admin] Manually adds XP to a user, a JSON list, or a file attachment.
+        Usage: 
+            !addxp @User 500
+            !addxp json {"user_id": 500, "user_id2": 300}
+            !addxp file (attach a .txt or .json file)
+        """
         # ==========================================
         # OPTION 1: Handle File Attachments
         # ==========================================
