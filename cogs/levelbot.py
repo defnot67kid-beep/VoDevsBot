@@ -798,6 +798,43 @@ class LevelBot(commands.Cog):
         await ctx.send(f"✅ Successfully removed **{amount} XP** from {member.mention}!\nThey are now at Level {new_level} with {new_xp:,} total XP.")
 
     # ==========================================
+    # NEW COMMAND: DELETE OLD JSON DATA
+    # ==========================================
+
+    @commands.command(name="deletejson")
+    @commands.has_permissions(administrator=True)
+    async def delete_json_data(self, ctx):
+        """
+        [Admin] Deletes the old level_data.json file to force the bot to use SQLite.
+        Usage: !deletejson
+        """
+        json_file = "level_data.json"
+        
+        if not os.path.exists(json_file):
+            return await ctx.send("✅ `level_data.json` does not exist. The bot is already using SQLite correctly!")
+
+        # Ask for confirmation first
+        await ctx.send("⚠️ **WARNING:** This will permanently delete `level_data.json`. Your XP is currently stored in SQLite (`level_data.db`). Are you sure?\n\nType `yes` to confirm, or `no` to cancel.")
+        
+        def check(m):
+            return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() in ['yes', 'no']
+        
+        try:
+            msg = await self.bot.wait_for('message', check=check, timeout=30)
+        except asyncio.TimeoutError:
+            return await ctx.send("⏳ Confirmation timed out. Command cancelled.")
+        
+        if msg.content.lower() == 'no':
+            return await ctx.send("✅ Command cancelled. `level_data.json` was kept.")
+        
+        # Delete the file
+        try:
+            os.remove(json_file)
+            await ctx.send(f"✅ Successfully deleted `{json_file}`. The bot will now **only** use SQLite (`level_data.db`).")
+        except Exception as e:
+            await ctx.send(f"❌ Failed to delete the file: {e}")
+
+    # ==========================================
     # XP LISTENER (The Core System - SQLite version)
     # ==========================================
 
