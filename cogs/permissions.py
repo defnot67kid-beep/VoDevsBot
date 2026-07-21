@@ -59,17 +59,17 @@ class Permissions(commands.Cog):
         return False
 
     # ==========================================
-    # COMMAND: !botpermsallow
+    # COMMAND: !permsallow
     # ==========================================
-    @commands.command(name="botpermsallow")
+    @commands.command(name="permsallow")
     @commands.has_permissions(administrator=True)
-    async def bot_perms_allow(self, ctx, target_type: str, level: str, *, target_id: str = None):
+    async def perms_allow(self, ctx, target_type: str, level: str, *, target_id: str = None):
         """
         [Admin] Grants bot permissions to a User, UserID, or Role.
         Usage:
-            !botpermsallow user admin @User
-            !botpermsallow userid mod 123456789
-            !botpermsallow role admin @Role
+            !permsallow user admin @User
+            !permsallow userid mod 123456789
+            !permsallow role admin @Role
         Levels: admin, mod
         """
         guild_id = str(ctx.guild.id)
@@ -81,7 +81,7 @@ class Permissions(commands.Cog):
 
         if target_type == "user":
             if not ctx.message.mentions:
-                return await ctx.send("❌ Please mention a user: `!botpermsallow user admin @User`")
+                return await ctx.send("❌ Please mention a user: `!permsallow user admin @User`")
             member = ctx.message.mentions[0]
             user_id = str(member.id)
 
@@ -94,7 +94,7 @@ class Permissions(commands.Cog):
 
         elif target_type == "userid":
             if not target_id:
-                return await ctx.send("❌ Please provide a user ID: `!botpermsallow userid admin 123456789`")
+                return await ctx.send("❌ Please provide a user ID: `!permsallow userid admin 123456789`")
             try:
                 user_id = str(int(target_id))
                 perms_collection.update_one(
@@ -108,7 +108,7 @@ class Permissions(commands.Cog):
 
         elif target_type == "role":
             if not ctx.message.role_mentions:
-                return await ctx.send("❌ Please mention a role: `!botpermsallow role admin @Role`")
+                return await ctx.send("❌ Please mention a role: `!permsallow role admin @Role`")
             role = ctx.message.role_mentions[0]
             role_id = str(role.id)
 
@@ -123,24 +123,24 @@ class Permissions(commands.Cog):
             await ctx.send("❌ Invalid target type! Use: `user`, `userid`, or `role`.")
 
     # ==========================================
-    # COMMAND: !botpermsremove
+    # COMMAND: !permsremove
     # ==========================================
-    @commands.command(name="botpermsremove")
+    @commands.command(name="permsremove")
     @commands.has_permissions(administrator=True)
-    async def bot_perms_remove(self, ctx, target_type: str, *, target_id: str = None):
+    async def perms_remove(self, ctx, target_type: str, *, target_id: str = None):
         """
         [Admin] Removes bot permissions from a User, UserID, or Role.
         Usage:
-            !botpermsremove user @User
-            !botpermsremove userid 123456789
-            !botpermsremove role @Role
+            !permsremove user @User
+            !permsremove userid 123456789
+            !permsremove role @Role
         """
         guild_id = str(ctx.guild.id)
         target_type = target_type.lower()
 
         if target_type == "user":
             if not ctx.message.mentions:
-                return await ctx.send("❌ Please mention a user: `!botpermsremove user @User`")
+                return await ctx.send("❌ Please mention a user: `!permsremove user @User`")
             member = ctx.message.mentions[0]
             user_id = str(member.id)
 
@@ -149,7 +149,7 @@ class Permissions(commands.Cog):
 
         elif target_type == "userid":
             if not target_id:
-                return await ctx.send("❌ Please provide a user ID: `!botpermsremove userid 123456789`")
+                return await ctx.send("❌ Please provide a user ID: `!permsremove userid 123456789`")
             try:
                 user_id = str(int(target_id))
                 perms_collection.delete_one({"guild_id": guild_id, "user_id": user_id})
@@ -159,7 +159,7 @@ class Permissions(commands.Cog):
 
         elif target_type == "role":
             if not ctx.message.role_mentions:
-                return await ctx.send("❌ Please mention a role: `!botpermsremove role @Role`")
+                return await ctx.send("❌ Please mention a role: `!permsremove role @Role`")
             role = ctx.message.role_mentions[0]
             role_id = str(role.id)
 
@@ -170,14 +170,14 @@ class Permissions(commands.Cog):
             await ctx.send("❌ Invalid target type! Use: `user`, `userid`, or `role`.")
 
     # ==========================================
-    # COMMAND: !botpermslist
+    # COMMAND: !permslist
     # ==========================================
-    @commands.command(name="botpermslist")
+    @commands.command(name="permslist")
     @commands.has_permissions(administrator=True)
-    async def bot_perms_list(self, ctx):
+    async def perms_list(self, ctx):
         """
         [Admin] Lists all users and roles with bot permissions.
-        Usage: !botpermslist
+        Usage: !permslist
         """
         guild_id = str(ctx.guild.id)
         results = perms_collection.find({"guild_id": guild_id})
