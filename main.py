@@ -247,6 +247,7 @@ async def load_cogs():
         await bot.load_extension("cogs.autorr")        # <--- YOUR AUTORR
         await bot.load_extension("cogs.giverole")      # <--- NEW GIVEROLE COG ADDED HERE
         await bot.load_extension("cogs.logging_audit")
+        await bot.load_extension("cogs.permissions")   # <--- NEW PERMISSIONS COG
         
         # Optional cogs (can be disabled if needed)
         try:
