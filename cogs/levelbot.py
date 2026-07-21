@@ -13,7 +13,7 @@ import io
 # ==========================================
 # DATABASE SETUP (SQLITE)
 # ==========================================
-DB_FILE = "level_data.db"
+DB_FILE = os.getenv("DB_PATH", "level_data.db")
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
