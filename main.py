@@ -6,8 +6,10 @@ import json
 import logging
 import sys
 import io
+import threading
 from dotenv import load_dotenv
 from datetime import datetime, timezone
+from flask import Flask, jsonify
 
 # ============================================
 # FIX: Force UTF-8 for Windows Terminals
@@ -455,6 +457,47 @@ def ensure_cog_exists(cog_name):
     return True
 
 # ============================================
+# FLASK API SERVER (For Dashboard to fetch leaderboard data)
+# ============================================
+
+app = Flask(__name__)
+
+@app.route('/api_leaderboard/<guild_id>')
+def api_leaderboard(guild_id):
+    # Since Flask and discord.py share the same process, we import the DB functions directly
+    from cogs.levelbot import DB_FILE
+    import sqlite3
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT user_id, xp FROM levels WHERE guild_id = ? ORDER BY xp DESC LIMIT 100", (guild_id,))
+    sorted_users = c.fetchall()
+    conn.close()
+    
+    data = []
+    
+    # Manually calculate level using the same formula from your bot
+    def get_level_from_xp(xp):
+        level = 0
+        while int(1000 * ((level + 1) ** 1.5)) <= xp:
+            level += 1
+        return level
+    
+    for user_id, xp in sorted_users:
+        level = get_level_from_xp(xp)
+        data.append({
+            "user_id": user_id,
+            "xp": xp,
+            "level": level
+        })
+    
+    return jsonify(data)
+
+def run_flask():
+    port = int(os.environ.get("API_PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
+# ============================================
 # MAIN ENTRY POINT
 # ============================================
 
@@ -482,6 +525,11 @@ if __name__ == "__main__":
         with open("welcome_data.json", "w") as f:
             json.dump({"settings": {}, "messages": {}}, f, indent=4)
         logging.info("📁 Created welcome_data.json")
+    
+    # Start the Flask API server in a separate thread
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    logging.info("🚀 Flask API server started on port 5000")
     
     # Run the bot
     loop = asyncio.new_event_loop()
