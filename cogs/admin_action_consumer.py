@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import pymongo
 import os
+from datetime import timedelta
 
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
@@ -10,15 +11,46 @@ if not MONGO_URI:
 client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
+reaction_roles_collection = db["reaction_roles"]
+
+# Helper to parse human-readable durations
+def parse_duration(text):
+    text = text.lower().strip()
+    if text.endswith("s"):
+        return int(text[:-1])
+    elif text.endswith("m"):
+        return int(text[:-1]) * 60
+    elif text.endswith("h"):
+        return int(text[:-1]) * 3600
+    elif text.endswith("d"):
+        return int(text[:-1]) * 86400
+    else:
+        try:
+            return int(text)
+        except ValueError:
+            return 600  # Default to 10 minutes if parsing fails
 
 class AdminActionConsumer(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.consume_actions.start()
 
+    # ==========================================
+    # COG UNLOAD CLEANUP
+    # ==========================================
+    def cog_unload(self):
+        self.consume_actions.cancel()
+
+    # ==========================================
+    # BACKGROUND TASK: Consume actions from Queue
+    # ==========================================
     @tasks.loop(seconds=5)
     async def consume_actions(self):
-        action = admin_actions_collection.find_one({"status": "pending"})
+        # Atomically claim a pending action to prevent race conditions
+        action = admin_actions_collection.find_one_and_update(
+            {"status": "pending"},
+            {"$set": {"status": "processing"}}
+        )
         if not action:
             return
 
@@ -38,27 +70,35 @@ class AdminActionConsumer(commands.Cog):
                 user_id = int(action.get('user_id'))
                 member = guild.get_member(user_id)
                 
-                if not member:
-                    admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": "Member not found"}})
-                    return
+                # If not cached, fetch from Discord API
+                if member is None:
+                    try:
+                        member = await guild.fetch_member(user_id)
+                    except discord.NotFound:
+                        admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": "Member not found"}})
+                        return
 
                 action_type = action.get('action')
                 reason = action.get('reason', 'No reason provided.')
                 duration = int(action.get('duration', 60))
 
-                if action_type == 'kick':
-                    await member.kick(reason=reason)
-                elif action_type == 'ban':
-                    await member.ban(reason=reason)
-                elif action_type == 'timeout':
-                    # FIX: Correct duration logic
-                    await member.timeout(discord.utils.utcnow() + discord.utils.timedelta(seconds=duration), reason=reason)
-                elif action_type == 'mute':
-                    # FIX: Safe Mute logic
-                    muted_role = discord.utils.get(guild.roles, name="Muted")
-                    if not muted_role:
-                        raise Exception("No 'Muted' role exists. Please create a role named 'Muted' in your server.")
-                    await member.add_roles(muted_role, reason=reason)
+                try:
+                    if action_type == 'kick':
+                        await member.kick(reason=reason)
+                    elif action_type == 'ban':
+                        await member.ban(reason=reason)
+                    elif action_type == 'timeout':
+                        # FIXED: Use datetime.timedelta
+                        await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
+                    elif action_type == 'mute':
+                        muted_role = discord.utils.get(guild.roles, name="Muted")
+                        if not muted_role:
+                            raise Exception("No 'Muted' role exists. Please create a role named 'Muted' in your server.")
+                        await member.add_roles(muted_role, reason=reason)
+                except discord.Forbidden:
+                    raise Exception("Bot does not have permission to perform this action.")
+                except discord.NotFound:
+                    raise Exception("User or role not found in Discord.")
                 
                 print(f"✅ Executed {action_type.upper()} on {member.display_name}")
 
@@ -68,23 +108,30 @@ class AdminActionConsumer(commands.Cog):
             elif action['type'] == 'announcement':
                 channel_id = int(action.get('channel_id', '0'))
                 channel = guild.get_channel(channel_id)
-                if not channel:
-                    raise Exception(f"Channel {channel_id} not found.")
+                if not channel or not isinstance(channel, discord.TextChannel):
+                    raise Exception(f"Channel {channel_id} is not a valid text channel.")
+                
                 await channel.send(action.get('content', ''))
                 print(f"✅ Sent announcement to {channel.name}")
 
             # ========================================
-            # 3. REACTION ROLES (NEW!)
+            # 3. REACTION ROLES
             # ========================================
             elif action['type'] == 'reaction_role':
                 channel_id = int(action.get('channel_id'))
                 channel = guild.get_channel(channel_id)
-                if not channel:
-                    raise Exception(f"Channel {channel_id} not found.")
+                if not channel or not isinstance(channel, discord.TextChannel):
+                    raise Exception(f"Channel {channel_id} is not a valid text channel.")
 
                 title = action.get('title', 'Get Roles!')
                 description = action.get('description', 'React below to get roles.')
-                color = discord.Color.from_str(action.get('color', '#5865F2'))
+                
+                # Safe color parsing
+                try:
+                    color = discord.Color.from_str(action.get('color', '#5865F2'))
+                except Exception:
+                    color = discord.Color.blurple()
+                    
                 roles_list = action.get('roles', [])
 
                 embed = discord.Embed(title=title, description=description, color=color)
@@ -98,48 +145,51 @@ class AdminActionConsumer(commands.Cog):
 
                 embed.add_field(name="Available Roles", value=role_text if role_text else "No roles added yet.", inline=False)
 
-                # Send the message to Discord
                 sent_msg = await channel.send(embed=embed)
                 
-                # Add the reactions
                 for item in roles_list:
                     try:
                         await sent_msg.add_reaction(item['emoji'])
-                    except:
-                        pass
+                    except discord.Forbidden:
+                        pass # Permission error, silently skip
+                
+                # PERSIST THE REACTION ROLE DATA TO MONGODB
+                reaction_roles_collection.insert_one({
+                    "guild_id": str(guild.id),
+                    "channel_id": str(channel.id),
+                    "message_id": str(sent_msg.id),
+                    "roles": roles_list
+                })
                 
                 print(f"✅ Created Reaction Role menu in {channel.name}")
 
             # ========================================
-            # 4. POLLS (NEW!)
+            # 4. POLLS
             # ========================================
             elif action['type'] == 'poll':
                 channel_id = int(action.get('channel_id', '0'))
                 channel = guild.get_channel(channel_id)
-                if not channel:
-                    raise Exception(f"Channel {channel_id} not found.")
+                if not channel or not isinstance(channel, discord.TextChannel):
+                    raise Exception(f"Channel {channel_id} is not a valid text channel.")
 
                 question = action.get('question', 'Poll')
                 options = action.get('options', [])
-                duration_seconds = int(action.get('duration', 600)) # Default 10 mins
+                # Parse the duration string (handles "15m", "1h", etc.)
+                duration_seconds = parse_duration(action.get('duration', '10m'))
                 poll_type = action.get('poll_type', 'single')
 
                 if len(options) < 2:
                     raise Exception("At least 2 options required for a poll.")
 
-                # Formatting the poll embed
                 embed = discord.Embed(
                     title=f"📊 {question}",
                     description="\n".join([f"**{i+1}.** {opt}" for i, opt in enumerate(options)]),
                     color=discord.Color.blurple()
                 )
-                embed.set_footer(text=f"Type: {'Multiple' if poll_type == 'multiple' else 'Single'} Choice")
+                embed.set_footer(text=f"Type: {'Multiple' if poll_type == 'multiple' else 'Single'} Choice | Ends in {duration_seconds}s")
 
-                # Send the poll 
                 sent_msg = await channel.send(embed=embed)
                 
-                # Add reactions as "votes"
-                # (1️⃣, 2️⃣, 3️⃣, etc)
                 emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
                 for i in range(len(options)):
                     if i < len(emojis):
@@ -160,6 +210,77 @@ class AdminActionConsumer(commands.Cog):
     async def before_consume_actions(self):
         await self.bot.wait_until_ready()
         print("🚀 Admin Action Consumer is starting...")
+
+    @consume_actions.after_loop
+    async def after_consume_actions(self):
+        if self.consume_actions.is_being_cancelled():
+            print("⚠️ Admin Action Consumer loop was cancelled.")
+
+    # ==========================================
+    # REACTION ROLE EVENT LISTENERS
+    # ==========================================
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        if payload.user_id == self.bot.user.id:
+            return
+
+        # Look up the persisted reaction role data in MongoDB
+        rr_data = reaction_roles_collection.find_one({"message_id": str(payload.message_id)})
+        if not rr_data:
+            return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+
+        member = guild.get_member(payload.user_id)
+        if not member:
+            try:
+                member = await guild.fetch_member(payload.user_id)
+            except discord.NotFound:
+                return
+
+        emoji_str = str(payload.emoji)
+        for role_data in rr_data["roles"]:
+            if role_data["emoji"] == emoji_str:
+                role = guild.get_role(role_data["role_id"])
+                if role and role not in member.roles:
+                    try:
+                        await member.add_roles(role, reason="Reaction Role")
+                    except discord.Forbidden:
+                        print(f"⚠️ Could not add role {role.name} to {member.display_name} (Missing Permissions).")
+                break
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        if payload.user_id == self.bot.user.id:
+            return
+
+        rr_data = reaction_roles_collection.find_one({"message_id": str(payload.message_id)})
+        if not rr_data:
+            return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+
+        member = guild.get_member(payload.user_id)
+        if not member:
+            try:
+                member = await guild.fetch_member(payload.user_id)
+            except discord.NotFound:
+                return
+
+        emoji_str = str(payload.emoji)
+        for role_data in rr_data["roles"]:
+            if role_data["emoji"] == emoji_str:
+                role = guild.get_role(role_data["role_id"])
+                if role and role in member.roles:
+                    try:
+                        await member.remove_roles(role, reason="Reaction Role Removed")
+                    except discord.Forbidden:
+                        print(f"⚠️ Could not remove role {role.name} from {member.display_name} (Missing Permissions).")
+                break
 
 async def setup(bot):
     await bot.add_cog(AdminActionConsumer(bot))
