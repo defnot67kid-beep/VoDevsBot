@@ -12,7 +12,7 @@ db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
 
 class AdminActionConsumer(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot): 
         self.bot = bot
         self.consume_actions.start()
 
