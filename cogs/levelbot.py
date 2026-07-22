@@ -9,6 +9,7 @@ import math
 import random
 import aiohttp
 import io
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 # ==========================================
 # MONGODB SETUP
@@ -176,59 +177,154 @@ class LevelBot(commands.Cog):
         else:
             await ctx.send(f"❌ {member.mention} hasn't chatted enough to have a rank yet!")
 
+    # ==========================================
+    # BEAUTIFUL IMAGE LEADERBOARD (ARCADE/VORTEX STYLE)
+    # ==========================================
     @commands.command(name="leaderboard", aliases=["lb"])
     async def prefix_leaderboard(self, ctx):
         guild_id = str(ctx.guild.id)
         count = levels_collection.count_documents({"guild_id": guild_id})
         if count == 0:
-            await ctx.send("❌ No level data for this server yet!")
-            return
+            return await ctx.send("❌ No level data for this server yet!")
         
         results = levels_collection.find({"guild_id": guild_id}).sort("xp", pymongo.DESCENDING).limit(10)
-        sorted_users = list(results)
+        top_users = list(results)
         
+        # Set canvas parameters
+        canvas_width = 800
+        row_height = 80
+        padding = 20
+        total_height = padding + (row_height * len(top_users)) + padding
+        
+        # Background
+        bg_color = (36, 38, 43)  # Dark background
+        img = Image.new('RGB', (canvas_width, total_height), color=bg_color)
+        draw = ImageDraw.Draw(img)
+        
+        # Load fonts
+        try:
+            # You MUST upload these fonts to your project!
+            font_rank = ImageFont.truetype("Inter-SemiBold.ttf", 28)
+            font_name = ImageFont.truetype("Inter-SemiBold.ttf", 24)
+            font_level = ImageFont.truetype("Inter-SemiBold.ttf", 20)
+        except:
+            font_rank = ImageFont.load_default()
+            font_name = ImageFont.load_default()
+            font_level = ImageFont.load_default()
+        
+        rank_colors = {
+            1: (255, 200, 40),   # Gold
+            2: (185, 185, 185),  # Silver
+            3: (230, 140, 60),   # Bronze
+        }
+        
+        y_offset = padding
+        
+        # Download and process each user asynchronously
+        async def fetch_avatar(url):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=5) as resp:
+                        if resp.status == 200:
+                            data = await resp.read()
+                            return Image.open(io.BytesIO(data)).convert("RGBA")
+            except:
+                pass
+            return None
+        
+        tasks = []
+        for doc in top_users:
+            user_id = doc["user_id"]
+            member = ctx.guild.get_member(int(user_id))
+            if member:
+                avatar_url = member.display_avatar.with_format("png").replace(size=128).url
+                tasks.append((doc, member, fetch_avatar(avatar_url)))
+        
+        # Wait for all avatars to download
+        processed = []
+        for doc, member, task in tasks:
+            avatar_img = await task
+            processed.append((doc, member, avatar_img))
+        
+        # Draw rows
+        for i, (doc, member, avatar_img) in enumerate(processed, 1):
+            y_start = y_offset
+            card_color = (45, 47, 54)
+            
+            # Draw rounded card background
+            draw.rounded_rectangle(
+                [20, y_start, canvas_width - 20, y_start + row_height - 10],
+                radius=12,
+                fill=card_color
+            )
+            
+            # Draw Rank (Gold/Silver/Bronze/White)
+            rank_color = rank_colors.get(i, (200, 200, 200))
+            draw.text((50, y_start + 24), f"#{i}", fill=rank_color, font=font_rank)
+            
+            # Draw Avatar
+            if avatar_img:
+                # Crop avatar to a circle
+                mask = Image.new("L", (50, 50), 0)
+                mask_draw = ImageDraw.Draw(mask)
+                mask_draw.ellipse((0, 0, 50, 50), fill=255)
+                avatar_img = avatar_img.resize((50, 50), Image.LANCZOS)
+                avatar_img.putalpha(mask)
+                img.paste(avatar_img, (100, y_start + 15), avatar_img)
+            
+            # Draw Username
+            display_name = member.display_name
+            draw.text((160, y_start + 24), f"@{display_name}", fill=(240, 240, 240), font=font_name)
+            
+            # Draw Level
+            level = self.get_level_from_xp(doc["xp"])
+            draw.text((550, y_start + 24), f"LVL: {level}", fill=(240, 240, 240), font=font_level)
+            
+            # Draw XP Bar
+            next_xp = self.get_xp_needed(level + 1)
+            prev_xp = self.get_xp_needed(level)
+            xp_in_level = doc["xp"] - prev_xp
+            needed_for_level = next_xp - prev_xp
+            progress = xp_in_level / needed_for_level if needed_for_level > 0 else 1.0
+            
+            bar_x = 160
+            bar_y = y_start + 52
+            bar_width = 580
+            bar_height = 8
+            
+            # Background bar
+            draw.rounded_rectangle(
+                [bar_x, bar_y, bar_x + bar_width, bar_y + bar_height],
+                radius=4,
+                fill=(70, 70, 70)
+            )
+            # Filled bar (Arcade pinkish color)
+            filled_width = int(bar_width * progress)
+            if filled_width > 0:
+                draw.rounded_rectangle(
+                    [bar_x, bar_y, bar_x + filled_width, bar_y + bar_height],
+                    radius=4,
+                    fill=(255, 150, 170)
+                )
+            
+            y_offset += row_height
+        
+        # Add title at the top
+        draw.text((20, 8), f"{ctx.guild.name} Leaderboard", fill=(255, 255, 255), font=font_name)
+        
+        # Convert to Discord File and send
+        img_io = io.BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        file = discord.File(fp=img_io, filename="leaderboard.png")
+        
+        # Add a button to view the web leaderboard
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         web_url = f"{dashboard_url.rstrip('/')}/leaderboard/{guild_id}"
-        
-        # Create the "View leaderboard" button
         view = discord.ui.View()
-        view.add_item(
-            discord.ui.Button(
-                label="View leaderboard",
-                style=discord.ButtonStyle.link,
-                url=web_url,
-                emoji="📊"
-            )
-        )
+        view.add_item(discord.ui.Button(label="View Web Leaderboard", style=discord.ButtonStyle.link, url=web_url, emoji="🌐"))
         
-        # Build the beautiful Vortex-style embed
-        embed = discord.Embed(
-            title=f"{ctx.guild.name}",
-            color=discord.Color.from_rgb(45, 45, 45)  # Dark grey/black background
-        )
-        
-        leaderboard_text = ""
-        for i, doc in enumerate(sorted_users, 1):
-            member = ctx.guild.get_member(int(doc["user_id"]))
-            if member:
-                level = self.get_level_from_xp(doc["xp"])
-                # Use the # symbol with a string for the underline
-                medal = f"#{i}"
-                # Simulate the red line under each user using Unicode
-                underline = "─" * (len(member.display_name) + 15)
-                leaderboard_text += f"**{medal}** • `@{member.display_name}` • **LVL: {level}**\n"
-                leaderboard_text += f"`{underline}`\n"
-        
-        embed.description = leaderboard_text
-        
-        # Add the "Overall XP" dropdown-style footer
-        embed.add_field(
-            name="Overall XP",
-            value=f"▾ **{count} members**",
-            inline=False
-        )
-        
-        await ctx.send(embed=embed, view=view)
+        await ctx.send(file=file, view=view)
 
     @commands.command(name="xpslmset")
     @commands.has_permissions(administrator=True)
@@ -581,38 +677,113 @@ class LevelSlashCommands(commands.Cog):
         else:
             await interaction.response.send_message(f"❌ {member.mention} hasn't chatted enough to have a rank yet!", ephemeral=True)
 
-    @app_commands.command(name="leaderboard", description="Show the top 10 levelers in the server")
+    @app_commands.command(name="leaderboard", description="Show the top 10 levelers in the server as an image")
     @app_commands.guild_only()
     async def slash_leaderboard(self, interaction: discord.Interaction):
         cog = self.get_cog()
         if not cog: return await interaction.response.send_message("❌ Cog not loaded.", ephemeral=True)
         
+        # Re-use the exact same logic from the prefix command
         guild_id = str(interaction.guild.id)
         count = levels_collection.count_documents({"guild_id": guild_id})
         if count == 0:
             return await interaction.response.send_message("❌ No level data for this server yet!", ephemeral=True)
-
+        
         results = levels_collection.find({"guild_id": guild_id}).sort("xp", pymongo.DESCENDING).limit(10)
-        sorted_users = list(results)
+        top_users = list(results)
+        
+        canvas_width = 800
+        row_height = 80
+        padding = 20
+        total_height = padding + (row_height * len(top_users)) + padding
+        bg_color = (36, 38, 43)
+        img = Image.new('RGB', (canvas_width, total_height), color=bg_color)
+        draw = ImageDraw.Draw(img)
+        
+        try:
+            font_rank = ImageFont.truetype("Inter-SemiBold.ttf", 28)
+            font_name = ImageFont.truetype("Inter-SemiBold.ttf", 24)
+            font_level = ImageFont.truetype("Inter-SemiBold.ttf", 20)
+        except:
+            font_rank = ImageFont.load_default()
+            font_name = ImageFont.load_default()
+            font_level = ImageFont.load_default()
+        
+        rank_colors = {1: (255, 200, 40), 2: (185, 185, 185), 3: (230, 140, 60)}
+        y_offset = padding
+        
+        async def fetch_avatar(url):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=5) as resp:
+                        if resp.status == 200:
+                            data = await resp.read()
+                            return Image.open(io.BytesIO(data)).convert("RGBA")
+            except:
+                pass
+            return None
+        
+        tasks = []
+        for doc in top_users:
+            user_id = doc["user_id"]
+            member = interaction.guild.get_member(int(user_id))
+            if member:
+                avatar_url = member.display_avatar.with_format("png").replace(size=128).url
+                tasks.append((doc, member, fetch_avatar(avatar_url)))
+        
+        processed = []
+        for doc, member, task in tasks:
+            avatar_img = await task
+            processed.append((doc, member, avatar_img))
+        
+        for i, (doc, member, avatar_img) in enumerate(processed, 1):
+            y_start = y_offset
+            card_color = (45, 47, 54)
+            draw.rounded_rectangle([20, y_start, canvas_width - 20, y_start + row_height - 10], radius=12, fill=card_color)
+            rank_color = rank_colors.get(i, (200, 200, 200))
+            draw.text((50, y_start + 24), f"#{i}", fill=rank_color, font=font_rank)
+            
+            if avatar_img:
+                mask = Image.new("L", (50, 50), 0)
+                mask_draw = ImageDraw.Draw(mask)
+                mask_draw.ellipse((0, 0, 50, 50), fill=255)
+                avatar_img = avatar_img.resize((50, 50), Image.LANCZOS)
+                avatar_img.putalpha(mask)
+                img.paste(avatar_img, (100, y_start + 15), avatar_img)
+            
+            display_name = member.display_name
+            draw.text((160, y_start + 24), f"@{display_name}", fill=(240, 240, 240), font=font_name)
+            level = cog.get_level_from_xp(doc["xp"])
+            draw.text((550, y_start + 24), f"LVL: {level}", fill=(240, 240, 240), font=font_level)
+            
+            next_xp = cog.get_xp_needed(level + 1)
+            prev_xp = cog.get_xp_needed(level)
+            xp_in_level = doc["xp"] - prev_xp
+            needed_for_level = next_xp - prev_xp
+            progress = xp_in_level / needed_for_level if needed_for_level > 0 else 1.0
+            
+            bar_x = 160
+            bar_y = y_start + 52
+            bar_width = 580
+            bar_height = 8
+            draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_width, bar_y + bar_height], radius=4, fill=(70, 70, 70))
+            filled_width = int(bar_width * progress)
+            if filled_width > 0:
+                draw.rounded_rectangle([bar_x, bar_y, bar_x + filled_width, bar_y + bar_height], radius=4, fill=(255, 150, 170))
+            y_offset += row_height
+        
+        draw.text((20, 8), f"{interaction.guild.name} Leaderboard", fill=(255, 255, 255), font=font_name)
+        img_io = io.BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        file = discord.File(fp=img_io, filename="leaderboard.png")
+        
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         web_url = f"{dashboard_url.rstrip('/')}/leaderboard/{guild_id}"
         view = discord.ui.View()
-        view.add_item(discord.ui.Button(label="View leaderboard", style=discord.ButtonStyle.link, url=web_url, emoji="📊"))
+        view.add_item(discord.ui.Button(label="View Web Leaderboard", style=discord.ButtonStyle.link, url=web_url, emoji="🌐"))
         
-        embed = discord.Embed(title=f"{interaction.guild.name}", color=discord.Color.from_rgb(45, 45, 45))
-        leaderboard_text = ""
-        for i, doc in enumerate(sorted_users, 1):
-            member = interaction.guild.get_member(int(doc["user_id"]))
-            if member:
-                level = cog.get_level_from_xp(doc["xp"])
-                medal = f"#{i}"
-                underline = "─" * (len(member.display_name) + 15)
-                leaderboard_text += f"**{medal}** • `@{member.display_name}` • **LVL: {level}**\n"
-                leaderboard_text += f"`{underline}`\n"
-        embed.description = leaderboard_text
-        
-        embed.add_field(name="Overall XP", value=f"▾ **{count} members**", inline=False)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(file=file, view=view)
 
     @app_commands.command(name="xpslowmode", description="[Admin] Set the global XP cooldown in seconds")
     @app_commands.guild_only()
