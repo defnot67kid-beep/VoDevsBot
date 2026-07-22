@@ -45,9 +45,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(response).encode())
 
-    # ------------------------------------------------------------------
-    # 1. CREATE REACTION ROLE
-    # ------------------------------------------------------------------
     async def handle_create_reaction_role(self, data):
         try:
             guild_id = int(data.get('guild_id'))
@@ -77,12 +74,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             msg = None
             try:
                 msg = await channel.send(embed=embed)
+                # Add reactions
                 for item in roles_list:
                     try: await msg.add_reaction(item['emoji'])
                     except: pass
             except Exception as e:
                 return {"status": "error", "message": str(e)}
 
+            # Save to MongoDB
             rr_collection.insert_one({
                 "message_id": str(msg.id), "channel_id": channel_id, "guild_id": guild_id,
                 "title": title, "description": description, "color": color_hex,
@@ -92,9 +91,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    # ------------------------------------------------------------------
-    # 2. MODERATION ACTIONS (Kick, Ban, Timeout, Mute)
-    # ------------------------------------------------------------------
     async def handle_mod_action(self, data):
         try:
             guild_id = int(data.get('guild_id'))
@@ -124,9 +120,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    # ------------------------------------------------------------------
-    # 3. GET REAL MEMBERS DATA (Populates the Dashboard!)
-    # ------------------------------------------------------------------
     async def handle_get_members(self, data):
         try:
             guild_id = int(data.get('guild_id'))
