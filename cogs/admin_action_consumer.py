@@ -14,7 +14,6 @@ if not MONGO_URI:
 client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
-levels_collection = db["levels"] # If you ever need XP data
 
 class AdminActionConsumer(commands.Cog):
     def __init__(self, bot):
@@ -69,6 +68,7 @@ class AdminActionConsumer(commands.Cog):
                     await member.add_roles(muted_role, reason=reason)
                 
                 print(f"✅ Executed {action_type.upper()} on {member.display_name}")
+                admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
             # ===========================
             # Handle ANNOUNCEMENTS
@@ -82,17 +82,15 @@ class AdminActionConsumer(commands.Cog):
                 content = action.get('content', '')
                 await channel.send(content)
                 print(f"✅ Sent announcement to {channel.name}")
+                admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
             # ===========================
-            # Handle POLLS (Future expansion)
+            # Handle POLLS 
             # ===========================
             elif action['type'] == 'poll':
-                # Placeholder for poll implementation
+                # Implementation for polls goes here
                 print("✅ Poll action received (Placeholder)")
-                pass
-
-            # Mark as completed
-            admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
+                admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
         except Exception as e:
             print(f"❌ Action Failed: {e}")
