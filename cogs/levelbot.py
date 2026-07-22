@@ -451,6 +451,9 @@ class LevelBot(commands.Cog):
                 embed.add_field(name=f"Level {level}", value=f"{role.mention}\n*{', '.join(perm_list) if perm_list else 'Base'}*", inline=False)
         await ctx.send(embed=embed)
 
+    # ==========================================
+    # FIXED ADDXP COMMAND
+    # ==========================================
     @commands.command(name="addxp")
     @commands.has_permissions(administrator=True)
     async def prefix_addxp(self, ctx, member_or_json: str = None, amount: float = None):
@@ -474,7 +477,10 @@ class LevelBot(commands.Cog):
                         processed = 0
                         for user_id, xp in data.items():
                             if isinstance(xp, (int, float)) and xp > 0:
-                                await self._add_xp_to_db(ctx.guild.id, user_id, xp)
+                                # We use a temporary member lookup to get name, but send ID directly to DB
+                                member = ctx.guild.get_member(int(user_id))
+                                # We pass None as member and let the helper handle DB-only update
+                                await self._add_xp_to_db(ctx.guild.id, user_id, xp, None)
                                 processed += 1
                         await ctx.send(f"✅ Processed file. Added XP to **{processed}** users. (No pings sent)")
                     else:
@@ -491,14 +497,20 @@ class LevelBot(commands.Cog):
         if member_or_json is not None and member_or_json.lower() == "json":
             if amount is None:
                 return await ctx.send("❌ Missing JSON data. Example: `!addxp json {\"123456789\": 500}`")
+            
             json_str = amount
+            # If it's just a raw number passed, we wrap it in a dict
+            if isinstance(json_str, (int, float)):
+                json_str = str(json_str)
+
             try:
                 data = json.loads(json_str)
                 if isinstance(data, dict):
                     processed = 0
                     for user_id, xp in data.items():
                         if isinstance(xp, (int, float)) and xp > 0:
-                            await self._add_xp_to_db(ctx.guild.id, user_id, xp)
+                            # We don't need member for JSON, just ID
+                            await self._add_xp_to_db(ctx.guild.id, user_id, xp, None)
                             processed += 1
                     await ctx.send(f"✅ Added XP to **{processed}** users from JSON list. (No pings sent)")
                 else:
@@ -508,25 +520,59 @@ class LevelBot(commands.Cog):
             return
 
         # ==========================================
-        # OPTION 3: Single User Addition (No Pings + Safety Cap)
+        # OPTION 3: Single User Addition (No Pings)
         # ==========================================
+        # If member_or_json is actually an integer ID string, try to fetch as user
         if member_or_json is None or amount is None:
             return await ctx.send("❌ Usage: `!addxp @User 500` or `!addxp json {\"id\": xp}` or attach a file.")
         
-        if amount > 10000000:
-            return await ctx.send("❌ You cannot add more than 10,000,000 XP at once!")
-
         try:
             converter = commands.MemberConverter()
             member = await converter.convert(ctx, member_or_json)
         except:
-            return await ctx.send("❌ Invalid user. Please mention a user or provide a valid User ID.")
+            # It's not a mention, maybe it's an ID
+            try:
+                user_id = str(int(member_or_json))
+                member = ctx.guild.get_member(int(user_id))
+                if not member:
+                    # If they aren't in the server, we still add XP to the DB but without username update
+                    await self._add_xp_to_db(ctx.guild.id, user_id, amount, None)
+                    await ctx.send(f"✅ Successfully added **{amount} XP** to User ID `{user_id}`. (No ping sent)")
+                    return
+            except:
+                return await ctx.send("❌ Invalid user. Please mention a user or provide a valid User ID.")
 
         if amount <= 0:
             return await ctx.send("❌ You must add a positive amount of XP!")
 
-        await self._add_xp_to_db(ctx.guild.id, str(member.id), amount)
+        # We have a member object now
+        await self._add_xp_to_db(ctx.guild.id, str(member.id), amount, member)
         await ctx.send(f"✅ Successfully added **{amount} XP** to `{member.display_name}`. (No ping sent)")
+
+    # ==========================================
+    # HELPER: ADD XP TO DB (MEMBER OPTIONAL)
+    # ==========================================
+    async def _add_xp_to_db(self, guild_id, user_id, amount, member=None):
+        if member:
+            # We have a member, update username and avatar hash
+            levels_collection.update_one(
+                {"guild_id": guild_id, "user_id": user_id},
+                {
+                    "$inc": {"xp": amount},
+                    "$set": {
+                        "username": member.display_name,
+                        "avatar_hash": member.display_avatar.key
+                    }
+                },
+                upsert=True
+            )
+        else:
+            # Only update XP, leave username unchanged
+            levels_collection.update_one(
+                {"guild_id": guild_id, "user_id": user_id},
+                {"$inc": {"xp": amount}},
+                upsert=True
+            )
 
     @commands.command(name="removexp")
     @commands.has_permissions(administrator=True)
@@ -565,19 +611,6 @@ class LevelBot(commands.Cog):
             await ctx.send(f"✅ Successfully deleted `{json_file}`. The bot will now **only** use MongoDB.")
         except Exception as e:
             await ctx.send(f"❌ Failed to delete the file: {e}")
-
-    async def _add_xp_to_db(self, guild_id, user_id, amount):
-        levels_collection.update_one(
-            {"guild_id": guild_id, "user_id": user_id},
-            {
-                "$inc": {"xp": amount},
-                "$set": {
-                    "username": member.display_name,
-                    "avatar_hash": member.display_avatar.key
-                }
-            },
-            upsert=True
-        )
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -849,7 +882,7 @@ class LevelSlashCommands(commands.Cog):
         if not cog: return await interaction.response.send_message("❌ Cog not loaded.", ephemeral=True)
         if amount > 10000000:
             return await interaction.response.send_message("❌ You cannot add more than 10,000,000 XP at once!", ephemeral=True)
-        await cog._add_xp_to_db(str(interaction.guild.id), str(member.id), amount)
+        await cog._add_xp_to_db(str(interaction.guild.id), str(member.id), amount, member)
         await interaction.response.send_message(f"✅ Successfully added **{amount} XP** to `{member.display_name}`.", ephemeral=True)
 
     @app_commands.command(name="removexp", description="[Admin] Manually remove XP from a user")
