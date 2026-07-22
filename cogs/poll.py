@@ -7,6 +7,11 @@ import asyncio
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 import threading
+import logging
+
+# Disable Flask's default logging so it doesn't spam the bot logs
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 POLL_DATA_FILE = "polls_data.json"
 GLOBAL_POLL_CHANNEL = 1526730287378075648
@@ -306,9 +311,18 @@ def bot_send_announcement():
 
 # Function to start the API in a background thread
 def start_api():
-    # If running on Railway, it MUST use the PORT variable assigned to it
-    port = int(os.getenv("BOT_API_PORT", 5001)) 
-    api_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    # PORT=0 tells Railway to assign any available free port automatically
+    port = int(os.getenv("BOT_API_PORT", 0))
+    
+    try:
+        # Try using Waitress (better for production)
+        from waitress import serve
+        print(f"🚀 Starting Poll API on dynamic port (Waitress)...")
+        serve(api_app, host='0.0.0.0', port=port)
+    except ImportError:
+        # Fallback to Flask development server
+        print(f"🚀 Starting Poll API on dynamic port (Flask)...")
+        api_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # Start the background thread only when the bot starts up
 def start_api_thread():
@@ -323,5 +337,4 @@ async def on_ready(self):
 
 async def setup(bot): 
     await bot.add_cog(Poll(bot))
-    # Manually trigger API start here if on_ready fails to trigger
     start_api_thread()
