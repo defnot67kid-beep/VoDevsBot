@@ -254,7 +254,7 @@ async def load_cogs():
         # ==============================================
         await bot.load_extension("cogs.admingiver")      # <--- ADMIN/OWNER LINK GENERATOR
         await bot.load_extension("cogs.server_cache")    # <--- CACHES ROLES/CHANNELS
-        await bot.load_extension("cogs.dashboardcontroller") # <--- INTERNAL API BRIDGE!
+        await bot.load_extension("cogs.user_cache")      # <--- REPLACED dashboardcontroller
         
         # Optional cogs (can be disabled if needed)
         try:
