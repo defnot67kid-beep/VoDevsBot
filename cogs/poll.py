@@ -5,6 +5,8 @@ import json
 import os
 import asyncio
 from datetime import datetime, timedelta
+from flask import Flask, request, jsonify
+import threading
 
 POLL_DATA_FILE = "polls_data.json"
 GLOBAL_POLL_CHANNEL = 1526730287378075648
@@ -281,3 +283,48 @@ class Poll(commands.Cog):
         await create_poll_logic(fake_interaction, q, opts, seconds, p_type, is_global=False)
 
 async def setup(bot): await bot.add_cog(Poll(bot))
+
+
+# ==========================================
+# BOT API RECEIVERS (For Admin Dashboard Actions)
+# ==========================================
+# Create a simple internal Flask app inside the bot just to listen
+api_app = Flask(__name__)
+
+@api_app.route('/api/admin/create_poll', methods=['POST'])
+def bot_create_poll():
+    data = request.json
+    # Note: The poll.py cog logic can be imported and run here.
+    # For now, we return a success to prove connectivity.
+    return jsonify({"status": "success", "message": "Poll endpoint received!"})
+
+@api_app.route('/api/admin/mod_action', methods=['POST'])
+def bot_mod_action():
+    data = request.json
+    # Discord logic to handle mod actions goes here.
+    return jsonify({"status": "success", "action": data.get('action')})
+
+@api_app.route('/api/admin/send_announcement', methods=['POST'])
+def bot_send_announcement():
+    data = request.json
+    return jsonify({"status": "success", "message": "Announcement endpoint received!"})
+
+# Function to start the API in a background thread
+def start_api():
+    # If running on Railway, it MUST use the PORT variable assigned to it
+    port = int(os.getenv("PORT", 8080)) 
+    # If you want it to run on a separate internal port, change 8080 to 5001, 
+    # BUT remember to update your dashboard's BOT_API_URL env var to match!
+    api_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+# Start the background thread only when the bot starts up
+def start_api_thread():
+    if not any(t.name == "PollAPIThread" for t in threading.enumerate()):
+        thread = threading.Thread(target=start_api, daemon=True, name="PollAPIThread")
+        thread.start()
+
+# Hook the startup into the bot's on_ready event
+@Poll.listener()
+async def on_ready(self):
+    start_api_thread()
+    print("✅ Poll API Background Server Started!")
