@@ -190,20 +190,44 @@ class LevelBot(commands.Cog):
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         web_url = f"{dashboard_url.rstrip('/')}/leaderboard/{guild_id}"
         
+        # Create the "View leaderboard" button
         view = discord.ui.View()
-        view.add_item(discord.ui.Button(label="View leaderboard", style=discord.ButtonStyle.link, url=web_url, emoji="📊"))
+        view.add_item(
+            discord.ui.Button(
+                label="View leaderboard",
+                style=discord.ButtonStyle.link,
+                url=web_url,
+                emoji="📊"
+            )
+        )
         
-        embed = discord.Embed(title=f"{ctx.guild.name}", color=discord.Color.dark_embed())
+        # Build the beautiful Vortex-style embed
+        embed = discord.Embed(
+            title=f"{ctx.guild.name}",
+            color=discord.Color.from_rgb(45, 45, 45)  # Dark grey/black background
+        )
+        
         leaderboard_text = ""
         for i, doc in enumerate(sorted_users, 1):
             member = ctx.guild.get_member(int(doc["user_id"]))
             if member:
                 level = self.get_level_from_xp(doc["xp"])
-                medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"#{i}"
+                # Use the # symbol with a string for the underline
+                medal = f"#{i}"
+                # Simulate the red line under each user using Unicode
+                underline = "─" * (len(member.display_name) + 15)
                 leaderboard_text += f"**{medal}** • `@{member.display_name}` • **LVL: {level}**\n"
+                leaderboard_text += f"`{underline}`\n"
         
         embed.description = leaderboard_text
-        embed.set_footer(text=f"{count} members • Overall XP")
+        
+        # Add the "Overall XP" dropdown-style footer
+        embed.add_field(
+            name="Overall XP",
+            value=f"▾ **{count} members**",
+            inline=False
+        )
+        
         await ctx.send(embed=embed, view=view)
 
     @commands.command(name="xpslmset")
@@ -575,16 +599,19 @@ class LevelSlashCommands(commands.Cog):
         view = discord.ui.View()
         view.add_item(discord.ui.Button(label="View leaderboard", style=discord.ButtonStyle.link, url=web_url, emoji="📊"))
         
-        embed = discord.Embed(title=f"{interaction.guild.name}", color=discord.Color.dark_embed())
+        embed = discord.Embed(title=f"{interaction.guild.name}", color=discord.Color.from_rgb(45, 45, 45))
         leaderboard_text = ""
         for i, doc in enumerate(sorted_users, 1):
             member = interaction.guild.get_member(int(doc["user_id"]))
             if member:
                 level = cog.get_level_from_xp(doc["xp"])
-                medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"#{i}"
+                medal = f"#{i}"
+                underline = "─" * (len(member.display_name) + 15)
                 leaderboard_text += f"**{medal}** • `@{member.display_name}` • **LVL: {level}**\n"
+                leaderboard_text += f"`{underline}`\n"
         embed.description = leaderboard_text
-        embed.set_footer(text=f"{count} members • Overall XP")
+        
+        embed.add_field(name="Overall XP", value=f"▾ **{count} members**", inline=False)
         await interaction.response.send_message(embed=embed, view=view)
 
     @app_commands.command(name="xpslowmode", description="[Admin] Set the global XP cooldown in seconds")
@@ -793,7 +820,7 @@ class LevelSlashCommands(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ==========================================
-# SETUP FUNCTION (Fixes the "no setup function" error)
+# SETUP FUNCTION
 # ==========================================
 async def setup(bot):
     await bot.add_cog(LevelBot(bot))
