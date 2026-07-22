@@ -5,13 +5,6 @@ import json
 import os
 import asyncio
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify
-import threading
-import logging
-
-# Disable Flask's default logging so it doesn't spam the bot logs
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
 
 POLL_DATA_FILE = "polls_data.json"
 GLOBAL_POLL_CHANNEL = 1526730287378075648
@@ -99,7 +92,6 @@ class PollSelectMenu(Select):
         if self.poll_id not in polls: return await interaction.response.send_message("❌ Poll not found.", ephemeral=True)
         data = polls[self.poll_id]
         
-        # LOCK CHECK
         if data.get("ended", False):
             return await interaction.response.send_message("🔒 This poll has already ended and is locked.", ephemeral=True)
             
@@ -140,7 +132,6 @@ class PollView(View):
         
         if total == 0: return await interaction.response.send_message("📊 No votes have been cast yet.", ephemeral=True)
         
-        # === CLEAN, MODERN RESULTS EMBED ===
         embed = discord.Embed(
             title=f"📊 Live Results: {data['question']}",
             color=discord.Color.green()
@@ -185,7 +176,6 @@ async def create_poll_logic(interaction, question, options, duration_seconds, p_
     }
     save_polls(polls)
 
-    # Determine where to send
     target_channel = interaction.channel
     if is_global:
         global_channel = interaction.guild.get_channel(GLOBAL_POLL_CHANNEL)
@@ -195,24 +185,18 @@ async def create_poll_logic(interaction, question, options, duration_seconds, p_
         else:
             await interaction.followup.send(f"⚠️ Global channel not found. Sending locally.", ephemeral=True)
 
-    # Send the message and save the message object into the view
     sent_msg = await target_channel.send(embed=embed, view=PollView(poll_id, options, p_type == "multiple", end_time, is_global, None))
-    
-    # Update the view to have the message reference so we can edit it later
     view = PollView(poll_id, options, p_type == "multiple", end_time, is_global, sent_msg)
     await sent_msg.edit(view=view)
 
-    # === AUTO-END TIMER ===
     await asyncio.sleep(duration_seconds)
     
-    # Reload data to ensure it's fresh
     polls = load_polls()
     if poll_id in polls:
         data = polls[poll_id]
         data["ended"] = True
         save_polls(polls)
         
-        # Build Final Results Embed
         all_voters = set()
         for voters in data["votes"].values(): all_voters.update(voters)
         total = len(all_voters)
@@ -235,11 +219,10 @@ async def create_poll_logic(interaction, question, options, duration_seconds, p_
                 )
             final_embed.set_footer(text=f"Total Voters: {total}")
         
-        # Edit the original message to remove the dropdown and show results
         try:
-            await sent_msg.edit(embed=final_embed, view=None) # View=None locks it completely
+            await sent_msg.edit(embed=final_embed, view=None)
         except:
-            pass # If message was deleted, just ignore
+            pass
 
 # ==========================================
 # MAIN COG
@@ -250,21 +233,18 @@ class Poll(commands.Cog):
     @commands.command(name="pollmenu")
     @commands.has_permissions(manage_messages=True)
     async def poll_menu(self, ctx):
-        """[Admin] Opens a pop-up to create an advanced poll."""
         embed = discord.Embed(title="📝 Local Poll Creator", description="Click below for a local channel poll.", color=discord.Color.blurple())
         await ctx.send(embed=embed, view=PollMenuTriggerView(ctx, is_global=False))
 
     @commands.command(name="globalpoll")
     @commands.has_permissions(manage_messages=True)
     async def global_poll_menu(self, ctx):
-        """[Admin] Opens a pop-up to create a poll for the global channel."""
         embed = discord.Embed(title="🌐 Global Poll Creator", description=f"Click below to create a poll that will automatically be sent to <#{GLOBAL_POLL_CHANNEL}>.", color=discord.Color.gold())
         await ctx.send(embed=embed, view=PollMenuTriggerView(ctx, is_global=True))
 
     @commands.command(name="pollmake")
     @commands.has_permissions(manage_messages=True)
     async def poll_make(self, ctx, duration: str = "15m", p_type: str = "single", *, question_and_options: str):
-        """[Admin] Text-based local poll creation."""
         if "|" not in question_and_options:
             return await ctx.send("❌ Format: `!pollmake 5m single \"Question\" | Opt1 | Opt2`")
         parts = [p.strip() for p in question_and_options.split("|")]
@@ -287,54 +267,5 @@ class Poll(commands.Cog):
         fake_interaction = FakeInteraction(ctx)
         await create_poll_logic(fake_interaction, q, opts, seconds, p_type, is_global=False)
 
-# ==========================================
-# BOT API RECEIVERS (For Admin Dashboard Actions)
-# ==========================================
-# Create a simple internal Flask app inside the bot just to listen
-api_app = Flask(__name__)
-
-@api_app.route('/api/admin/create_poll', methods=['POST'])
-def bot_create_poll():
-    data = request.json
-    return jsonify({"status": "success", "message": "Poll endpoint received!"})
-
-@api_app.route('/api/admin/mod_action', methods=['POST'])
-def bot_mod_action():
-    data = request.json
-    # Discord logic to handle mod actions goes here.
-    return jsonify({"status": "success", "action": data.get('action')})
-
-@api_app.route('/api/admin/send_announcement', methods=['POST'])
-def bot_send_announcement():
-    data = request.json
-    return jsonify({"status": "success", "message": "Announcement endpoint received!"})
-
-# Function to start the API in a background thread
-def start_api():
-    # PORT=0 tells Railway to assign any available free port automatically
-    port = int(os.getenv("BOT_API_PORT", 0))
-    
-    try:
-        # Try using Waitress (better for production)
-        from waitress import serve
-        print(f"🚀 Starting Poll API on dynamic port (Waitress)...")
-        serve(api_app, host='0.0.0.0', port=port)
-    except ImportError:
-        # Fallback to Flask development server
-        print(f"🚀 Starting Poll API on dynamic port (Flask)...")
-        api_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
-# Start the background thread only when the bot starts up
-def start_api_thread():
-    thread = threading.Thread(target=start_api, daemon=True)
-    thread.start()
-
-# Attach startup listener manually
-@commands.Cog.listener()
-async def on_ready(self):
-    start_api_thread()
-    print("✅ Poll API Background Server Started!")
-
 async def setup(bot): 
     await bot.add_cog(Poll(bot))
-    start_api_thread()
