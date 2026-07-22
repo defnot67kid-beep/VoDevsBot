@@ -229,7 +229,7 @@ async def load_cogs():
         
         # Economy & Leveling
         await bot.load_extension("cogs.economy_ultra")
-        await bot.load_extension("cogs.levelbot")    # <--- YOUR NEW LEVELBOT
+        await bot.load_extension("cogs.levelbot")    # <--- YOUR LEVELBOT
         
         # Media & Entertainment
         await bot.load_extension("cogs.music_ultimate")
@@ -245,10 +245,15 @@ async def load_cogs():
         await bot.load_extension("cogs.pingperm")
         await bot.load_extension("cogs.poll")
         await bot.load_extension("cogs.autorr")        # <--- YOUR AUTORR
-        await bot.load_extension("cogs.giverole")      # <--- NEW GIVEROLE COG
+        await bot.load_extension("cogs.giverole")      # <--- GIVEROLE COG
         await bot.load_extension("cogs.logging_audit")
-        await bot.load_extension("cogs.permissions")   # <--- NEW PERMISSIONS COG
-        await bot.load_extension("cogs.admingiver")    # <--- NEW ADMINGIVER COG
+        await bot.load_extension("cogs.permissions")   # <--- PERMISSIONS COG
+        await bot.load_extension("cogs.admingiver")    # <--- ADMINGIVER COG
+        
+        # ==============================================
+        # NEW: SERVER CACHE FOR OWNER DASHBOARD
+        # ==============================================
+        await bot.load_extension("cogs.server_cache")  # <--- ADDED THIS!
         
         # Optional cogs (can be disabled if needed)
         try:
