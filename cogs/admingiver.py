@@ -17,6 +17,7 @@ db = client["vodevs_bot_data"]
 invites_collection = db["admin_invites"]
 admins_collection = db["admins"]
 owner_secrets_collection = db["owner_secrets"]
+# Note: server_meta is used by the server_cache.py cog to store roles/channels
 
 class AdminGiver(commands.Cog):
     def __init__(self, bot):
@@ -77,14 +78,17 @@ class AdminGiver(commands.Cog):
         if str(ctx.author.id) != "1516568962966753291":
             return await ctx.send("❌ You are not the owner of this bot.")
 
-        # Generate an impossible-to-guess token
+        # Generate the secure token
         raw_token = secrets.token_urlsafe(64)
         owner_token = hashlib.sha256(f"{raw_token}-1516568962966753291".encode()).hexdigest()
 
-        # Save to Database
+        # Save to Database (NOW INCLUDING THE GUILD ID)
         owner_secrets_collection.update_one(
             {"owner_id": "1516568962966753291"}, 
-            {"$set": {"token": owner_token}}, 
+            {"$set": {
+                "token": owner_token,
+                "guild_id": str(ctx.guild.id)  # <--- SAVE THE SERVER ID HERE
+            }}, 
             upsert=True
         )
 
