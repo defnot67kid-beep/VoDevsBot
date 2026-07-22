@@ -160,11 +160,12 @@ class DashboardController(commands.Cog):
         self.httpd = None
         self.server_thread = None
 
-    @commands.Cog.listener()
+        @commands.Cog.listener()
     async def on_ready(self):
         print("🚀 Starting Dashboard Controller (Internal API)...")
         def run_server():
-            port = int(os.getenv("PORT", 5001))
+            # IMPORTANT: Use the official Railway PORT env var (usually 8080)
+            port = int(os.getenv("PORT", 8080)) 
             self.httpd = HTTPServer(('0.0.0.0', port), DashboardHandler)
             print(f"✅ Dashboard Controller listening on port {port}")
             self.httpd.serve_forever()
