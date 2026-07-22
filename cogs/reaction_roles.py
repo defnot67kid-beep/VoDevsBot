@@ -1,22 +1,18 @@
 import discord
 from discord.ext import commands
-import json
+import pymongo
 import os
 
 # ============================================
-# DATABASE SETUP (JSON File)
+# MONGODB SETUP
 # ============================================
-DB_FILE = "reaction_roles_data.json"
+MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI:
+    raise ValueError("❌ MONGO_URI environment variable is not set!")
 
-def load_data():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-def save_data(data):
-    with open(DB_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+client = pymongo.MongoClient(MONGO_URI)
+db = client["vodevs_bot_data"]
+rr_collection = db["reaction_roles"]
 
 # ============================================
 # REACTION ROLE COG
@@ -24,7 +20,6 @@ def save_data(data):
 class ReactionRoles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.data = load_data()
 
     # ============================================
     # ADMIN SETUP COMMAND (Creates the Menu)
@@ -43,17 +38,18 @@ class ReactionRoles(commands.Cog):
 
         msg = await ctx.send(embed=embed)
         
-        menu_id = str(msg.id)
-        self.data[menu_id] = {
+        # Save to MongoDB
+        rr_collection.insert_one({
+            "message_id": str(msg.id),
             "channel_id": ctx.channel.id,
+            "guild_id": ctx.guild.id,
             "title": title,
             "description": description,
             "color": color.value,
             "roles": {} 
-        }
-        save_data(self.data)
+        })
 
-        await ctx.send(f"✅ Reaction Role Menu created! ID: `{menu_id}`\nUse `{ctx.prefix}rr-add {menu_id} :emoji: @Role <description>` to add roles.", delete_after=15)
+        await ctx.send(f"✅ Reaction Role Menu created! ID: `{msg.id}`\nUse `{ctx.prefix}rr-add {msg.id} :emoji: @Role <description>` to add roles.", delete_after=15)
 
     # ============================================
     # ADMIN ADD COMMAND (Adds Role+Emoji to Menu)
@@ -63,11 +59,12 @@ class ReactionRoles(commands.Cog):
     async def rr_add(self, ctx, menu_id: str, emoji: str, role: discord.Role, *, description: str = "No description provided."):
         """[Admin] Adds a role + emoji pair to an existing Reaction Role menu."""
         
-        if menu_id not in self.data:
+        data = rr_collection.find_one({"message_id": menu_id})
+        if not data:
             return await ctx.send("❌ Invalid Menu ID. Please use the ID provided when you ran `!rr-setup`.")
 
         try:
-            channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
+            channel = self.bot.get_channel(data["channel_id"])
             msg = await channel.fetch_message(int(menu_id))
         except:
             return await ctx.send("❌ Could not find the menu message. It might have been deleted.")
@@ -77,194 +74,95 @@ class ReactionRoles(commands.Cog):
         except:
             return await ctx.send("❌ Invalid Emoji! Please provide a standard emoji (e.g., ✅, 🔥, or custom server emoji).")
 
-        self.data[menu_id]["roles"][emoji] = {
-            "role_id": role.id,
-            "description": description
-        }
-        save_data(self.data)
+        # Update MongoDB
+        rr_collection.update_one(
+            {"message_id": menu_id},
+            {"$set": {f"roles.{emoji}": {"role_id": role.id, "description": description}}}
+        )
 
         await self.update_menu_embed(msg, menu_id)
         await ctx.send(f"✅ Added {emoji} -> {role.mention} to the menu!", delete_after=10)
 
     # ============================================
-    # NEW: REMOVE A ROLE/EMOJI FROM THE MENU
+    # OTHER ADMIN COMMANDS (Updated for MongoDB)
     # ============================================
     @commands.command(name="rr-remove")
     @commands.has_permissions(manage_roles=True)
     async def rr_remove(self, ctx, menu_id: str, emoji: str):
-        """[Admin] Removes an emoji/role pair from the menu."""
-        
-        if menu_id not in self.data:
+        if not rr_collection.find_one({"message_id": menu_id}):
             return await ctx.send("❌ Invalid Menu ID.")
-
-        if emoji not in self.data[menu_id]["roles"]:
-            return await ctx.send("❌ That emoji is not on this menu.")
-
-        try:
-            channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
-            msg = await channel.fetch_message(int(menu_id))
-            await msg.clear_reaction(emoji)
-        except:
-            pass # If the message is gone, we just remove it from the database
-
-        # Remove from database
-        del self.data[menu_id]["roles"][emoji]
-        save_data(self.data)
-
-        # Update the embed
-        try:
-            await self.update_menu_embed(msg, menu_id)
-        except:
-            pass
-
+        
+        rr_collection.update_one({"message_id": menu_id}, {"$unset": {f"roles.{emoji}": ""}})
         await ctx.send(f"✅ Removed {emoji} from the menu.", delete_after=10)
 
-    # ============================================
-    # NEW: CHANGE A ROLE'S DESCRIPTION
-    # ============================================
     @commands.command(name="rr-desc")
     @commands.has_permissions(manage_roles=True)
     async def rr_desc(self, ctx, menu_id: str, emoji: str, *, new_description: str):
-        """[Admin] Changes the description of an existing role on the menu."""
-        
-        if menu_id not in self.data:
+        if not rr_collection.find_one({"message_id": menu_id}):
             return await ctx.send("❌ Invalid Menu ID.")
-
-        if emoji not in self.data[menu_id]["roles"]:
-            return await ctx.send("❌ That emoji is not on this menu.")
-
-        # Update database
-        self.data[menu_id]["roles"][emoji]["description"] = new_description
-        save_data(self.data)
-
-        # Update the embed
-        try:
-            channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
-            msg = await channel.fetch_message(int(menu_id))
-            await self.update_menu_embed(msg, menu_id)
-        except:
-            pass
-
+        
+        rr_collection.update_one({"message_id": menu_id}, {"$set": {f"roles.{emoji}.description": new_description}})
         await ctx.send(f"✅ Updated description for {emoji} to: `{new_description}`", delete_after=10)
 
-    # ============================================
-    # NEW: CHANGE A ROLE (Swap the role itself)
-    # ============================================
     @commands.command(name="rr-role")
     @commands.has_permissions(manage_roles=True)
     async def rr_role(self, ctx, menu_id: str, emoji: str, new_role: discord.Role):
-        """[Admin] Swaps the role assigned to an emoji with a new role."""
-        
-        if menu_id not in self.data:
+        if not rr_collection.find_one({"message_id": menu_id}):
             return await ctx.send("❌ Invalid Menu ID.")
-
-        if emoji not in self.data[menu_id]["roles"]:
-            return await ctx.send("❌ That emoji is not on this menu.")
-
-        # Update database
-        self.data[menu_id]["roles"][emoji]["role_id"] = new_role.id
-        save_data(self.data)
-
-        # Update the embed
-        try:
-            channel = self.bot.get_channel(self.data[menu_id]["channel_id"])
-            msg = await channel.fetch_message(int(menu_id))
-            await self.update_menu_embed(msg, menu_id)
-        except:
-            pass
-
+        
+        rr_collection.update_one({"message_id": menu_id}, {"$set": {f"roles.{emoji}.role_id": new_role.id}})
         await ctx.send(f"✅ Updated role for {emoji} to {new_role.mention}", delete_after=10)
 
     # ============================================
-    # MENU UPDATE HELPER (Refreshes the Embed)
+    # MENU UPDATE HELPER
     # ============================================
     async def update_menu_embed(self, msg: discord.Message, menu_id: str):
-        data = self.data[menu_id]
+        data = rr_collection.find_one({"message_id": menu_id})
+        if not data: return
         
-        embed = discord.Embed(
-            title=data["title"],
-            description=data["description"],
-            color=discord.Color(data["color"])
-        )
-        
+        embed = discord.Embed(title=data["title"], description=data["description"], color=discord.Color(data["color"]))
         role_text = ""
         for emoji, role_info in data["roles"].items():
             role = msg.guild.get_role(role_info["role_id"])
-            role_name = role.mention if role else "**Deleted Role** (Please update!)"
+            role_name = role.mention if role else "**Deleted Role**"
             role_text += f"{emoji} {role_name} — *{role_info['description']}*\n"
         
-        if role_text:
-            embed.add_field(name="Available Roles", value=role_text, inline=False)
-        else:
-            embed.add_field(name="Available Roles", value="No roles added yet. Use `!rr-add` to add them!", inline=False)
-            
+        embed.add_field(name="Available Roles", value=role_text if role_text else "No roles added yet.", inline=False)
         embed.set_footer(text="React to this message to receive roles!")
         await msg.edit(embed=embed)
 
     # ============================================
-    # EVENT: ON RAW REACTION ADD
+    # EVENT: ON RAW REACTION ADD/REMOVE
     # ============================================
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        if payload.user_id == self.bot.user.id:
-            return
-
-        menu_id = str(payload.message_id)
-        if menu_id not in self.data:
-            return
-
+        if payload.user_id == self.bot.user.id: return
+        data = rr_collection.find_one({"message_id": str(payload.message_id)})
+        if not data: return
         guild = self.bot.get_guild(payload.guild_id)
-        if not guild:
-            return
-
         member = guild.get_member(payload.user_id)
-        if not member:
-            return
-
+        if not member: return
         emoji_str = str(payload.emoji)
-        if emoji_str in self.data[menu_id]["roles"]:
-            role_id = self.data[menu_id]["roles"][emoji_str]["role_id"]
-            role = guild.get_role(role_id)
-            
+        if emoji_str in data["roles"]:
+            role = guild.get_role(data["roles"][emoji_str]["role_id"])
             if role and role not in member.roles:
-                try:
-                    await member.add_roles(role, reason=f"Reaction Role: {emoji_str}")
-                except discord.Forbidden:
-                    pass 
+                try: await member.add_roles(role, reason=f"Reaction Role: {emoji_str}")
+                except: pass
 
-    # ============================================
-    # EVENT: ON RAW REACTION REMOVE
-    # ============================================
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
-        if payload.user_id == self.bot.user.id:
-            return
-
-        menu_id = str(payload.message_id)
-        if menu_id not in self.data:
-            return
-
+        if payload.user_id == self.bot.user.id: return
+        data = rr_collection.find_one({"message_id": str(payload.message_id)})
+        if not data: return
         guild = self.bot.get_guild(payload.guild_id)
-        if not guild:
-            return
-
         member = guild.get_member(payload.user_id)
-        if not member:
-            return
-
+        if not member: return
         emoji_str = str(payload.emoji)
-        if emoji_str in self.data[menu_id]["roles"]:
-            role_id = self.data[menu_id]["roles"][emoji_str]["role_id"]
-            role = guild.get_role(role_id)
-            
+        if emoji_str in data["roles"]:
+            role = guild.get_role(data["roles"][emoji_str]["role_id"])
             if role and role in member.roles:
-                try:
-                    await member.remove_roles(role, reason=f"Reaction Role Removed: {emoji_str}")
-                except discord.Forbidden:
-                    pass 
+                try: await member.remove_roles(role, reason=f"Reaction Role Removed: {emoji_str}")
+                except: pass
 
-# ============================================
-# SETUP FUNCTION
-# ============================================
 async def setup(bot):
     await bot.add_cog(ReactionRoles(bot))
