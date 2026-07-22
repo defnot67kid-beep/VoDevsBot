@@ -241,19 +241,20 @@ async def load_cogs():
         # Features
         await bot.load_extension("cogs.giveaway_raffle")
         await bot.load_extension("cogs.voice_channel")
-        await bot.load_extension("cogs.reaction_roles")
+        await bot.load_extension("cogs.reaction_roles") # <--- CONVERTED TO MONGODB
         await bot.load_extension("cogs.pingperm")
         await bot.load_extension("cogs.poll")
         await bot.load_extension("cogs.autorr")        # <--- YOUR AUTORR
         await bot.load_extension("cogs.giverole")      # <--- GIVEROLE COG
         await bot.load_extension("cogs.logging_audit")
         await bot.load_extension("cogs.permissions")   # <--- PERMISSIONS COG
-        await bot.load_extension("cogs.admingiver")    # <--- ADMINGIVER COG
         
         # ==============================================
-        # NEW: SERVER CACHE FOR OWNER DASHBOARD
+        # NEW CRITICAL COGS FOR DASHBOARD INTEGRATION
         # ==============================================
-        await bot.load_extension("cogs.server_cache")  # <--- ADDED THIS!
+        await bot.load_extension("cogs.admingiver")      # <--- ADMIN/OWNER LINK GENERATOR
+        await bot.load_extension("cogs.server_cache")    # <--- CACHES ROLES/CHANNELS
+        await bot.load_extension("cogs.dashboardcontroller") # <--- INTERNAL API BRIDGE!
         
         # Optional cogs (can be disabled if needed)
         try:
