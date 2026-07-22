@@ -3,9 +3,6 @@ from discord.ext import commands, tasks
 import pymongo
 import os
 
-# ==========================================
-# MONGODB SETUP
-# ==========================================
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     raise ValueError("❌ MONGO_URI environment variable is not set!")
@@ -19,17 +16,14 @@ class UserCache(commands.Cog):
         self.bot = bot
         self.cache_users.start()
 
-    # ==========================================
-    # BACKGROUND TASK: Update the cache every 30 min
-    # ==========================================
     @tasks.loop(minutes=30)
     async def cache_users(self):
-        print("🔄 Caching all server members into MongoDB...")
+        print(f"🔄 Caching members for {len(self.bot.guilds)} guilds...")
         
         for guild in self.bot.guilds:
             members_data = []
             for member in guild.members:
-                if member.bot: continue # Skip bots
+                if member.bot: continue
                 
                 status_str = "offline"
                 if member.status == discord.Status.online: status_str = "online"
@@ -43,21 +37,18 @@ class UserCache(commands.Cog):
                     "status": status_str
                 })
             
-            # Save this guild's members to MongoDB
             user_cache_collection.update_one(
                 {"guild_id": str(guild.id)},
                 {"$set": {"members": members_data}},
                 upsert=True
             )
-            print(f"✅ Saved {len(members_data)} members for guild: {guild.name}")
+            print(f"✅ Saved {len(members_data)} members for {guild.name}")
 
     @cache_users.before_loop
     async def before_cache_users(self):
         await self.bot.wait_until_ready()
+        print("🚀 User Cache loop is starting...")
 
-    # ==========================================
-    # EVENT: Update cache when a user joins/leaves
-    # ==========================================
     @commands.Cog.listener()
     async def on_member_join(self, member):
         await self.cache_users()
