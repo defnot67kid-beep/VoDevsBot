@@ -307,7 +307,7 @@ def bot_send_announcement():
 # Function to start the API in a background thread
 def start_api():
     # If running on Railway, it MUST use the PORT variable assigned to it
-    port = int(os.getenv("PORT", 8080)) 
+    port = int(os.getenv("BOT_API_PORT", 5001)) 
     api_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # Start the background thread only when the bot starts up
