@@ -126,7 +126,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 class DashboardController(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        DashboardHandler.bot = bot # Give the Handler access to the bot instance
+        DashboardHandler.bot = bot
         self.httpd = None
         self.server_thread = None
 
@@ -134,7 +134,8 @@ class DashboardController(commands.Cog):
     async def on_ready(self):
         print("🚀 Starting Dashboard Controller (Internal API)...")
         def run_server():
-            port = int(os.getenv("DASHBOARD_CONTROLLER_PORT", 5001))
+            # IMPORTANT: Uses Railway's PORT variable! If undefined, defaults to 5001
+            port = int(os.getenv("PORT", 5001))
             self.httpd = HTTPServer(('0.0.0.0', port), DashboardHandler)
             print(f"✅ Dashboard Controller listening on port {port}")
             self.httpd.serve_forever()
