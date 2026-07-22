@@ -1,148 +1,454 @@
 import discord
 from discord.ext import commands
-import pymongo
 import os
-import json
 import asyncio
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
+import json
+import logging
+import sys
+import io
+from dotenv import load_dotenv
+from datetime import datetime, timezone
 
-# ==========================================
-# MONGODB SETUP
-# ==========================================
-MONGO_URI = os.getenv("MONGO_URI")
-if not MONGO_URI:
-    raise ValueError("❌ MONGO_URI environment variable is not set!")
+# ============================================
+# FIX: Force UTF-8 for Windows Terminals
+# ============================================
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-client = pymongo.MongoClient(MONGO_URI)
-db = client["vodevs_bot_data"]
-levels_collection = db["levels"]
-rr_collection = db["reaction_roles"]
-admins_collection = db["admins"]
+load_dotenv()
 
-# ==========================================
-# HTTP REQUEST HANDLER (Runs inside Bot)
-# ==========================================
-class DashboardHandler(BaseHTTPRequestHandler):
-    bot = None  # Static reference to the bot
+# Configuration
+BOT_TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = int(os.getenv("GUILD_ID", 0))
+OWNER_IDS = [int(id.strip()) for id in os.getenv("OWNER_IDS", "").split(",") if id.strip()]
 
-    def do_POST(self):
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
-        data = json.loads(post_data)
-        
-        response = {"status": "error", "message": "Invalid endpoint"}
-        
-        if self.path == "/api/create_reaction_role":
-            response = asyncio.run(self.handle_create_reaction_role(data))
-        elif self.path == "/api/mod_action":
-            response = asyncio.run(self.handle_mod_action(data))
-            
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps(response).encode())
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
-    async def handle_create_reaction_role(self, data):
-        try:
-            guild_id = int(data.get('guild_id'))
-            channel_id = int(data.get('channel_id'))
-            title = data.get('title')
-            description = data.get('description')
-            color_hex = data.get('color', '#5865F2')
-            roles_list = data.get('roles', [])
+# Bot setup
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-            guild = self.bot.get_guild(guild_id)
-            if not guild: return {"status": "error", "message": "Guild not found"}
+# Global cooldown system
+cooldowns = {}
 
-            channel = guild.get_channel(channel_id)
-            if not channel: return {"status": "error", "message": "Channel not found"}
+# ============================================
+# COMMANDS
+# ============================================
 
-            embed = discord.Embed(title=title, description=description, color=discord.Color.from_str(color_hex))
-            embed.set_footer(text="React to this message to receive roles!")
+@bot.command()
+async def whoami(ctx):
+    """Get your Discord user ID"""
+    await ctx.send(f"Your User ID is: `{ctx.author.id}`")
 
-            role_text = ""
-            for item in roles_list:
-                role = guild.get_role(item['role_id'])
-                role_mention = role.mention if role else "**Deleted Role**"
-                role_text += f"{item['emoji']} {role_mention} — *{item['description']}*\n"
-
-            embed.add_field(name="Available Roles", value=role_text if role_text else "No roles added yet.", inline=False)
-
-            msg = None
+@bot.command(name="sync")
+@commands.is_owner()
+async def sync_commands(ctx):
+    """[Owner] Sync slash commands manually"""
+    
+    if not ctx.guild:
+        await ctx.send("❌ This command must be used in a server!")
+        return
+    
+    await ctx.send("🔄 Attempting to sync slash commands...")
+    await ctx.send("⏳ This may take a moment...")
+    
+    try:
+        if GUILD_ID:
             try:
-                msg = await channel.send(embed=embed)
-                # Add reactions
-                for item in roles_list:
-                    try: await msg.add_reaction(item['emoji'])
-                    except: pass
-            except Exception as e:
-                return {"status": "error", "message": str(e)}
-
-            # Save to MongoDB
-            rr_collection.insert_one({
-                "message_id": str(msg.id), "channel_id": channel_id, "guild_id": guild_id,
-                "title": title, "description": description, "color": color_hex,
-                "roles": {item['emoji']: {"role_id": item['role_id'], "description": item['description']} for item in roles_list}
-            })
-            return {"status": "success", "message_id": str(msg.id)}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-    async def handle_mod_action(self, data):
+                guild = discord.Object(id=GUILD_ID)
+                bot.tree.copy_global_to(guild=guild)
+                await bot.tree.sync(guild=guild)
+                await ctx.send(f"✅ Commands synced to guild: {GUILD_ID}")
+                return
+            except discord.Forbidden:
+                await ctx.send("⚠️ Cannot sync to specific guild. Trying global sync...")
+        
         try:
-            guild_id = int(data.get('guild_id'))
-            user_id = int(data.get('user_id'))
-            action = data.get('action')
-            reason = data.get('reason', 'No reason provided.')
-            duration = int(data.get('duration', 60))
-
-            guild = self.bot.get_guild(guild_id)
-            if not guild: return {"status": "error", "message": "Guild not found"}
-
-            member = guild.get_member(user_id)
-            if not member: return {"status": "error", "message": "User not found in server"}
-
-            if action == 'kick':
-                await member.kick(reason=reason)
-            elif action == 'ban':
-                await member.ban(reason=reason)
-            elif action == 'timeout':
-                await member.timeout(discord.utils.utcnow() + discord.timedelta(seconds=duration), reason=reason)
-            elif action == 'mute':
-                muted_role = discord.utils.get(guild.roles, name="Muted")
-                if not muted_role: return {"status": "error", "message": "No 'Muted' role exists."}
-                await member.add_roles(muted_role, reason=reason)
+            await bot.tree.sync()
+            await ctx.send("✅ Commands synced globally! (May take up to 1 hour to appear in Discord)")
+        except discord.Forbidden:
+            await ctx.send("❌ Bot doesn't have the required permissions!")
+            await ctx.send("📌 Please re-invite the bot with the correct scopes:")
+            await ctx.send(f"🔗 https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands")
             
-            return {"status": "success", "action": action}
+    except Exception as e:
+        await ctx.send(f"❌ Failed to sync commands: {e}")
+
+@bot.command(name="syncglobal")
+@commands.is_owner()
+async def sync_global(ctx):
+    """[Owner] Sync slash commands globally"""
+    try:
+        await bot.tree.sync()
+        await ctx.send("✅ Commands synced globally! (May take up to 1 hour to appear)")
+    except discord.Forbidden:
+        await ctx.send("❌ Bot doesn't have the `applications.commands` scope!")
+        await ctx.send(f"🔗 Re-invite: https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to sync commands: {e}")
+
+@bot.command(name="botstatus")
+@commands.is_owner()
+async def bot_status(ctx):
+    """[Owner] Check bot permissions and status"""
+    
+    embed = discord.Embed(
+        title="🤖 Bot Status",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    
+    # Basic info
+    embed.add_field(
+        name="📊 Server Info",
+        value=f"Server: {ctx.guild.name}\nMembers: {ctx.guild.member_count}\nBot Name: {ctx.guild.me.display_name}",
+        inline=False
+    )
+    
+    # Check permissions
+    perms = ctx.guild.me.guild_permissions
+    
+    perm_list = [
+        ("Administrator", perms.administrator),
+        ("Manage Channels", perms.manage_channels),
+        ("Manage Roles", perms.manage_roles),
+        ("Manage Messages", perms.manage_messages),
+        ("Kick Members", perms.kick_members),
+        ("Ban Members", perms.ban_members),
+        ("Moderate Members", perms.moderate_members),
+        ("Use Slash Commands", perms.use_application_commands),
+        ("Manage Webhooks", perms.manage_webhooks),
+        ("View Channel", perms.view_channel),
+        ("Send Messages", perms.send_messages),
+        ("Read Message History", perms.read_message_history),
+    ]
+    
+    perm_text = "\n".join([f"{'✅' if p else '❌'} {name}" for name, p in perm_list])
+    embed.add_field(name="🔑 Permissions", value=perm_text, inline=False)
+    
+    # Slash command status
+    try:
+        # Try to sync to check if we have permission
+        if GUILD_ID:
+            guild = discord.Object(id=GUILD_ID)
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
+            embed.add_field(name="🔄 Slash Commands", value="✅ Synced to guild", inline=False)
+        else:
+            await bot.tree.sync()
+            embed.add_field(name="🔄 Slash Commands", value="✅ Synced globally", inline=False)
+    except discord.Forbidden:
+        embed.add_field(
+            name="🔄 Slash Commands",
+            value="❌ Missing `applications.commands` scope!\nRe-invite the bot with the correct scopes.",
+            inline=False
+        )
+    except Exception as e:
+        embed.add_field(name="🔄 Slash Commands", value=f"❌ {str(e)[:100]}", inline=False)
+    
+    # Invite link
+    embed.add_field(
+        name="🔗 Invite Link",
+        value=f"[Click to re-invite with correct permissions](https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands)",
+        inline=False
+    )
+    
+    embed.set_footer(text=f"Bot ID: {bot.user.id}")
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name="load")
+@commands.is_owner()
+async def load_cog(ctx, cog: str):
+    """[Owner] Load a cog"""
+    try:
+        await bot.load_extension(f"cogs.{cog}")
+        await ctx.send(f"✅ Loaded cog: {cog}")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to load cog: {e}")
+
+@bot.command(name="unload")
+@commands.is_owner()
+async def unload_cog(ctx, cog: str):
+    """[Owner] Unload a cog"""
+    try:
+        await bot.unload_extension(f"cogs.{cog}")
+        await ctx.send(f"✅ Unloaded cog: {cog}")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to unload cog: {e}")
+
+@bot.command(name="reload")
+@commands.is_owner()
+async def reload_cog(ctx, cog: str):
+    """[Owner] Reload a cog"""
+    try:
+        await bot.reload_extension(f"cogs.{cog}")
+        await ctx.send(f"✅ Reloaded cog: {cog}")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to reload cog: {e}")
+
+@bot.command(name="listcogs")
+@commands.is_owner()
+async def list_cogs(ctx):
+    """[Owner] List all loaded cogs"""
+    loaded = list(bot.extensions.keys())
+    if loaded:
+        embed = discord.Embed(
+            title="📦 Loaded Cogs",
+            color=discord.Color.blue()
+        )
+        for cog in sorted(loaded):
+            embed.add_field(name=cog, value="✅ Loaded", inline=False)
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send("❌ No cogs loaded.")
+
+# ============================================
+# Load cogs
+# ============================================
+async def load_cogs():
+    try:
+        # Core cogs
+        await bot.load_extension("cogs.admin_core")
+        await bot.load_extension("cogs.moderation_elite")
+        await bot.load_extension("cogs.utility_mega")
+        
+        # Fun & Games
+        await bot.load_extension("cogs.game_engine")
+        await bot.load_extension("cogs.fun_explosion")
+        await bot.load_extension("cogs.social_interaction")
+        
+        # Economy & Leveling
+        await bot.load_extension("cogs.economy_ultra")
+        await bot.load_extension("cogs.levelbot")    # <--- YOUR LEVELBOT
+        
+        # Media & Entertainment
+        await bot.load_extension("cogs.music_ultimate")
+        await bot.load_extension("cogs.anime_weeb")
+        
+        # --- SETTINGS BACKUP COG ---
+        await bot.load_extension("cogs.settings")    # <--- BACKUP MANAGER
+        
+        # Features
+        await bot.load_extension("cogs.giveaway_raffle")
+        await bot.load_extension("cogs.voice_channel")
+        await bot.load_extension("cogs.reaction_roles") # <--- CONVERTED TO MONGODB
+        await bot.load_extension("cogs.pingperm")
+        await bot.load_extension("cogs.poll")
+        await bot.load_extension("cogs.autorr")        # <--- YOUR AUTORR
+        await bot.load_extension("cogs.giverole")      # <--- GIVEROLE COG
+        await bot.load_extension("cogs.logging_audit")
+        await bot.load_extension("cogs.permissions")   # <--- PERMISSIONS COG
+        
+        # ==============================================
+        # NEW CRITICAL COGS FOR DASHBOARD INTEGRATION
+        # ==============================================
+        await bot.load_extension("cogs.admingiver")      # <--- ADMIN/OWNER LINK GENERATOR
+        await bot.load_extension("cogs.server_cache")    # <--- CACHES ROLES/CHANNELS
+        await bot.load_extension("cogs.dashboardcontroller") # <--- INTERNAL API BRIDGE!
+        
+        # Optional cogs (can be disabled if needed)
+        try:
+            await bot.load_extension("cogs.nsfw_optional")
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            logging.warning(f"⚠️ NSFW cog not loaded: {e}")
+        
+        try:
+            await bot.load_extension("cogs.ai_integration")
+        except Exception as e:
+            logging.warning(f"⚠️ AI cog not loaded: {e}")
+        
+        # Ticket system
+        await bot.load_extension("cogs.ticket")
+        
+        # Chat commands (deletemsg, sendmsgforuser)
+        await bot.load_extension("cogs.chatcmds")
+        
+        # Welcome System
+        await bot.load_extension("cogs.welcome")
+        
+        logging.info("✅ All cogs loaded successfully")
+    except Exception as e:
+        logging.error(f"❌ Failed to load cogs: {e}")
+        raise e
 
-    def log_message(self, format, *args):
-        return # Silence logging
+# ============================================
+# EVENT HANDLERS
+# ============================================
 
-# ==========================================
-# MAIN DASHBOARD CONTROLLER COG
-# ==========================================
-class DashboardController(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        DashboardHandler.bot = bot
-        self.httpd = None
-        self.server_thread = None
+@bot.event
+async def on_ready():
+    logging.info(f"✅ Logged in as {bot.user}")
+    logging.info(f"📊 Serving {len(bot.guilds)} guilds")
+    logging.info(f"👥 Watching {len(bot.users)} users")
+    logging.info(f"👑 Owners: {OWNER_IDS}")
+    
+    # Set presence
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name=f"{len(bot.guilds)} servers | /help"
+        )
+    )
+    
+    # Sync slash commands - IMPROVED ERROR HANDLING
+    try:
+        if GUILD_ID:
+            guild = discord.Object(id=GUILD_ID)
+            try:
+                # Check if we have permission to sync
+                bot.tree.copy_global_to(guild=guild)
+                await bot.tree.sync(guild=guild)
+                logging.info(f"✅ Commands synced to guild: {GUILD_ID}")
+            except discord.Forbidden:
+                logging.warning("⚠️ Cannot sync to specific guild (missing permissions). Syncing globally instead.")
+                try:
+                    await bot.tree.sync()
+                    logging.info("✅ Commands synced globally")
+                except discord.Forbidden:
+                    logging.error("❌ Bot doesn't have applications.commands scope!")
+                    logging.info(f"📌 Re-invite the bot with: https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands")
+        else:
+            try:
+                await bot.tree.sync()
+                logging.info("✅ Commands synced globally")
+            except discord.Forbidden:
+                logging.error("❌ Bot doesn't have applications.commands scope!")
+                logging.info(f"📌 Re-invite the bot with: https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands")
+                
+    except discord.Forbidden as e:
+        logging.error(f"❌ Failed to sync commands: {e}")
+        logging.info(f"📌 Re-invite the bot with: https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands")
+    except Exception as e:
+        logging.error(f"❌ Failed to sync commands: {e}")
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        print("🚀 Starting Dashboard Controller (Internal API)...")
-        def run_server():
-            # IMPORTANT: Uses Railway's PORT variable! If undefined, defaults to 5001
-            port = int(os.getenv("PORT", 5001))
-            self.httpd = HTTPServer(('0.0.0.0', port), DashboardHandler)
-            print(f"✅ Dashboard Controller listening on port {port}")
-            self.httpd.serve_forever()
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ This command is on cooldown. Try again in {error.retry_after:.1f}s.")
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ You don't have permission to use this command.")
+    elif isinstance(error, commands.BotMissingPermissions):
+        await ctx.send("❌ I don't have permission to do that.")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"❌ Missing required argument: `{error.param.name}`")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send(f"❌ Invalid argument: {error}")
+    elif isinstance(error, commands.CommandNotFound):
+        # Silently ignore command not found errors (prevents spam)
+        pass
+    else:
+        logging.error(f"❌ Command error: {error}")
+        await ctx.send(f"❌ An error occurred: {str(error)[:100]}")
 
-        self.server_thread = threading.Thread(target=run_server, daemon=True)
-        self.server_thread.start()
+@bot.event
+async def on_application_command_error(interaction, error):
+    """Handle slash command errors"""
+    if isinstance(error, discord.app_commands.errors.MissingPermissions):
+        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+    elif isinstance(error, discord.app_commands.errors.BotMissingPermissions):
+        await interaction.response.send_message("❌ I don't have permission to do that.", ephemeral=True)
+    elif isinstance(error, discord.app_commands.errors.CommandOnCooldown):
+        await interaction.response.send_message(f"⏳ This command is on cooldown. Try again in {error.retry_after:.1f}s.", ephemeral=True)
+    elif isinstance(error, discord.app_commands.errors.MissingRequiredArgument):
+        await interaction.response.send_message(f"❌ Missing required argument: `{error.param.name}`", ephemeral=True)
+    else:
+        logging.error(f"❌ Slash command error: {error}")
+        try:
+            await interaction.response.send_message(f"❌ An error occurred: {str(error)[:100]}", ephemeral=True)
+        except:
+            await interaction.followup.send(f"❌ An error occurred: {str(error)[:100]}", ephemeral=True)
 
-async def setup(bot):
-    await bot.add_cog(DashboardController(bot))
+# ============================================
+# GLOBAL HELPERS
+# ============================================
+
+async def delete_message_after_delay(message, delay=5):
+    """Delete a message after a delay"""
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except:
+        pass
+
+def is_owner(user_id):
+    """Check if a user is an owner"""
+    return user_id in OWNER_IDS
+
+def is_admin_or_owner(member):
+    """Check if a user is an admin or owner"""
+    if is_owner(member.id):
+        return True
+    return member.guild_permissions.administrator
+
+# ============================================
+# ERROR HANDLING FOR COG LOADING
+# ============================================
+
+class MissingCogError(Exception):
+    pass
+
+def ensure_cog_exists(cog_name):
+    """Check if a cog file exists"""
+    cog_path = os.path.join("cogs", f"{cog_name}.py")
+    if not os.path.exists(cog_path):
+        raise MissingCogError(f"Cog file not found: {cog_path}")
+    return True
+
+# ============================================
+# MAIN ENTRY POINT
+# ============================================
+
+if __name__ == "__main__":
+    # Create cogs directory if it doesn't exist
+    if not os.path.exists("cogs"):
+        os.makedirs("cogs")
+        logging.info("📁 Created cogs directory")
+    
+    # Create __init__.py in cogs if it doesn't exist
+    init_path = os.path.join("cogs", "__init__.py")
+    if not os.path.exists(init_path):
+        with open(init_path, "w") as f:
+            f.write("# This file makes the cogs folder a Python package\n")
+        logging.info("📁 Created cogs/__init__.py")
+    
+    # Check if token exists
+    if not BOT_TOKEN:
+        logging.error("❌ DISCORD_TOKEN not found in .env file!")
+        logging.error("📌 Please create a .env file with DISCORD_TOKEN=your_token_here")
+        sys.exit(1)
+    
+    # Create welcome_data.json if it doesn't exist
+    if not os.path.exists("welcome_data.json"):
+        with open("welcome_data.json", "w") as f:
+            json.dump({"settings": {}, "messages": {}}, f, indent=4)
+        logging.info("📁 Created welcome_data.json")
+    
+    # Run the bot
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        loop.run_until_complete(load_cogs())
+    except Exception as e:
+        logging.error(f"❌ Failed to load cogs: {e}")
+        sys.exit(1)
+    
+    try:
+        bot.run(BOT_TOKEN)
+    except discord.LoginFailure:
+        logging.error("❌ Invalid bot token! Please check your .env file.")
+    except discord.PrivilegedIntentsRequired:
+        logging.error("❌ Privileged intents required! Enable them in the Discord Developer Portal.")
+        logging.error("📌 Go to: https://discord.com/developers/applications/")
+    except Exception as e:
+        logging.error(f"❌ Fatal error: {e}")
