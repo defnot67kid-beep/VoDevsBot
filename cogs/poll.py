@@ -19,9 +19,6 @@ def save_polls(data):
     with open(POLL_DATA_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-# ==========================================
-# MODAL FOR !POLLMENU / !GLOBALPOLL
-# ==========================================
 class PollMenuModal(Modal, title="Create Advanced Poll"):
     question = TextInput(label="Poll Question", placeholder="What is your favorite color?", required=True)
     options = TextInput(label="Options (Separate with | )", placeholder="Red | Blue | Green | Yellow", required=True)
@@ -62,9 +59,6 @@ class PollMenuModal(Modal, title="Create Advanced Poll"):
 
         await create_poll_logic(interaction, q, opts, seconds, p_type, self.is_global)
 
-# ==========================================
-# VIEW TO TRIGGER MODAL
-# ==========================================
 class PollMenuTriggerView(View):
     def __init__(self, ctx, is_global: bool = False):
         super().__init__(timeout=60)
@@ -75,9 +69,6 @@ class PollMenuTriggerView(View):
     async def open_modal(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(PollMenuModal(self.ctx, self.is_global))
 
-# ==========================================
-# POLL DROPDOWN & VIEWS
-# ==========================================
 class PollSelectMenu(Select):
     def __init__(self, poll_id, options, multiple_choice):
         self.poll_id = poll_id
@@ -149,9 +140,6 @@ class PollView(View):
         embed.set_footer(text=f"Total Voters: {total} | Type: {'Multiple' if data['multiple_choice'] else 'Single'} Choice")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# ==========================================
-# CORE LOGIC
-# ==========================================
 async def create_poll_logic(interaction, question, options, duration_seconds, p_type, is_global):
     poll_id = f"{interaction.id}-{datetime.now().timestamp()}"
     end_time = datetime.now() + timedelta(seconds=duration_seconds)
@@ -224,9 +212,6 @@ async def create_poll_logic(interaction, question, options, duration_seconds, p_
         except:
             pass
 
-# ==========================================
-# MAIN COG
-# ==========================================
 class Poll(commands.Cog):
     def __init__(self, bot): self.bot = bot
 
