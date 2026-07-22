@@ -3,7 +3,7 @@ from discord.ext import commands
 import pymongo
 import os
 import secrets
-import asyncio
+import hashlib
 
 # ==========================================
 # MONGODB SETUP
@@ -16,6 +16,7 @@ client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
 invites_collection = db["admin_invites"]
 admins_collection = db["admins"]
+owner_secrets_collection = db["owner_secrets"]
 
 class AdminGiver(commands.Cog):
     def __init__(self, bot):
@@ -29,44 +30,33 @@ class AdminGiver(commands.Cog):
     async def generate_link(self, ctx, *, target: str):
         """
         [Admin] Generates a secure admin invite link for a user.
-        Usage: !generatelink @User  OR  !generatelink UserID  OR  !generatelink username
+        Usage: !generatelink @User
         """
-        # 1. Resolve the target to a Member object
         try:
             converter = commands.MemberConverter()
             member = await converter.convert(ctx, target)
         except:
-            # Try as User ID
             try:
                 user_id = int(target)
                 member = ctx.guild.get_member(user_id)
                 if not member:
-                    # Fetch the user from Discord API
                     try:
                         member = await self.bot.fetch_user(user_id)
                     except:
                         return await ctx.send("❌ Could not find that user.")
             except:
-                return await ctx.send("❌ Invalid target. Please mention a user, provide a User ID, or type a username.")
+                return await ctx.send("❌ Invalid target. Please mention a user or provide a User ID.")
 
-        # 2. Generate a secure, cryptographically random token
         invite_token = secrets.token_urlsafe(32)
-
-        # 3. Save to MongoDB
         invites_collection.update_one(
             {"token": invite_token},
-            {"$set": {
-                "discord_id": str(member.id),
-                "used": False
-            }},
+            {"$set": {"discord_id": str(member.id), "used": False}},
             upsert=True
         )
 
-        # 4. Build the link
         dashboard_url = os.getenv("DASHBOARD_URL", "https://vodevs-dashboard-production.up.railway.app")
         invite_link = f"{dashboard_url}/admin/signup/{invite_token}"
 
-        # 5. DM the user
         try:
             await member.send(
                 f"🔐 **You have been invited to become an Admin!**\n\n"
@@ -76,17 +66,36 @@ class AdminGiver(commands.Cog):
             )
             await ctx.send(f"✅ Invite link successfully sent to **{member.display_name}**!")
         except discord.Forbidden:
-            await ctx.send(f"❌ Could not DM {member.display_name}. They have DMs disabled. Here is the link:\n{invite_link}")
+            await ctx.send(f"❌ Could not DM {member.display_name}. Link: {invite_link}")
 
     # ==========================================
-    # CLEANUP: Remove expired invites (Optional, run periodically)
+    # COMMAND: !ownerlink (Owner Only)
     # ==========================================
-    @commands.command(name="cleaninvites")
-    @commands.has_permissions(administrator=True)
-    async def clean_invites(self, ctx):
-        """Deletes all used invites from the database."""
-        result = invites_collection.delete_many({"used": True})
-        await ctx.send(f"✅ Cleaned up {result.deleted_count} used invite links.")
+    @commands.command(name="ownerlink")
+    async def owner_link(self, ctx):
+        # Hardcoded Owner ID Check
+        if str(ctx.author.id) != "1516568962966753291":
+            return await ctx.send("❌ You are not the owner of this bot.")
+
+        # Generate an impossible-to-guess token
+        raw_token = secrets.token_urlsafe(64)
+        owner_token = hashlib.sha256(f"{raw_token}-1516568962966753291".encode()).hexdigest()
+
+        # Save to Database
+        owner_secrets_collection.update_one(
+            {"owner_id": "1516568962966753291"}, 
+            {"$set": {"token": owner_token}}, 
+            upsert=True
+        )
+
+        dashboard_url = os.getenv("DASHBOARD_URL", "https://vodevs-dashboard-production.up.railway.app")
+        invite_link = f"{dashboard_url}/owner/{owner_token}"
+
+        await ctx.send(
+            f"🛡️ **Bot Owner Control Panel Generated!**\n\n"
+            f"🔗 `{invite_link}`\n\n"
+            f"*Keep this link extremely secret. This token is a 64-byte SHA256 hash.*"
+        )
 
 async def setup(bot):
     await bot.add_cog(AdminGiver(bot))
