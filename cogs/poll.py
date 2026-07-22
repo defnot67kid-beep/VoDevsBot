@@ -282,9 +282,6 @@ class Poll(commands.Cog):
         fake_interaction = FakeInteraction(ctx)
         await create_poll_logic(fake_interaction, q, opts, seconds, p_type, is_global=False)
 
-async def setup(bot): await bot.add_cog(Poll(bot))
-
-
 # ==========================================
 # BOT API RECEIVERS (For Admin Dashboard Actions)
 # ==========================================
@@ -294,8 +291,6 @@ api_app = Flask(__name__)
 @api_app.route('/api/admin/create_poll', methods=['POST'])
 def bot_create_poll():
     data = request.json
-    # Note: The poll.py cog logic can be imported and run here.
-    # For now, we return a success to prove connectivity.
     return jsonify({"status": "success", "message": "Poll endpoint received!"})
 
 @api_app.route('/api/admin/mod_action', methods=['POST'])
@@ -313,18 +308,20 @@ def bot_send_announcement():
 def start_api():
     # If running on Railway, it MUST use the PORT variable assigned to it
     port = int(os.getenv("PORT", 8080)) 
-    # If you want it to run on a separate internal port, change 8080 to 5001, 
-    # BUT remember to update your dashboard's BOT_API_URL env var to match!
     api_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # Start the background thread only when the bot starts up
 def start_api_thread():
-    if not any(t.name == "PollAPIThread" for t in threading.enumerate()):
-        thread = threading.Thread(target=start_api, daemon=True, name="PollAPIThread")
-        thread.start()
+    thread = threading.Thread(target=start_api, daemon=True)
+    thread.start()
 
-# Hook the startup into the bot's on_ready event
-@Poll.listener()
+# Attach startup listener manually
+@commands.Cog.listener()
 async def on_ready(self):
     start_api_thread()
     print("✅ Poll API Background Server Started!")
+
+async def setup(bot): 
+    await bot.add_cog(Poll(bot))
+    # Manually trigger API start here if on_ready fails to trigger
+    start_api_thread()
