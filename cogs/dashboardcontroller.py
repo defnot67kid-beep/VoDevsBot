@@ -3,6 +3,7 @@ from discord.ext import commands
 import pymongo
 import os
 import json
+import asyncio
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 
@@ -33,16 +34,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         response = {"status": "error", "message": "Invalid endpoint"}
         
         if self.path == "/api/create_reaction_role":
-            response = self.handle_create_reaction_role(data)
+            response = asyncio.run(self.handle_create_reaction_role(data))
         elif self.path == "/api/mod_action":
-            response = self.handle_mod_action(data)
+            response = asyncio.run(self.handle_mod_action(data))
             
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps(response).encode())
 
-    def handle_create_reaction_role(self, data):
+    async def handle_create_reaction_role(self, data):
         try:
             guild_id = int(data.get('guild_id'))
             channel_id = int(data.get('channel_id'))
@@ -88,7 +89,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def handle_mod_action(self, data):
+    async def handle_mod_action(self, data):
         try:
             guild_id = int(data.get('guild_id'))
             user_id = int(data.get('user_id'))
