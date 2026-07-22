@@ -24,7 +24,26 @@ roles_collection = db["roles"]
 config_collection = db["config"]
 
 # ==========================================
-# SHARED DATA AND HELPER FUNCTIONS
+# CARD BUTTON VIEW
+# ==========================================
+class CardButton(discord.ui.View):
+    def __init__(self, dashboard_url):
+        super().__init__(timeout=None)
+        self.dashboard_url = dashboard_url
+
+    @discord.ui.button(label="/card", style=discord.ButtonStyle.primary, emoji="🎨")
+    async def card_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        clicker_id = str(interaction.user.id)
+        guild_id = str(interaction.guild.id)
+        specific_url = f"{self.dashboard_url}/dashboard/{guild_id}/{clicker_id}"
+        await interaction.response.send_message(
+            f"🔗 Click this link to edit **your** rank card:\n{specific_url}",
+            ephemeral=True
+        )
+
+
+# ==========================================
+# CLASS 1: PREFIX COMMANDS (!level, !lb, etc.)
 # ==========================================
 class LevelBot(commands.Cog):
     def __init__(self, bot):
@@ -116,16 +135,12 @@ class LevelBot(commands.Cog):
             return result[0]["rank"]
         return 0
 
-    # ==========================================
-    # HELPER: GET RANK IMAGE FILE
-    # ==========================================
     async def _get_rank_file(self, guild_id, user_id, display_name, avatar_url):
         clean_name = ''.join(c for c in display_name if c.isalnum() or c in (' ', '-', '_', '.', '#'))
         dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:8000")
         
         doc = levels_collection.find_one({"guild_id": guild_id, "user_id": user_id})
-        if not doc:
-            return None
+        if not doc: return None
         
         current_xp = doc["xp"]
         current_level = self.get_level_from_xp(current_xp)
@@ -151,10 +166,6 @@ class LevelBot(commands.Cog):
             print(f"❌ Error fetching rank card: {e}")
             return None
 
-    # ==========================================
-    # PREFIX COMMANDS (!level, !leaderboard, etc)
-    # ==========================================
-
     @commands.command(name="level", aliases=["lvl"])
     async def prefix_level(self, ctx, *, member: discord.Member = None):
         if member is None: member = ctx.author
@@ -163,7 +174,7 @@ class LevelBot(commands.Cog):
             view = CardButton(os.getenv("DASHBOARD_URL", "http://localhost:8000"))
             await ctx.send(file=file, view=view)
         else:
-            await ctx.send("❌ {member.mention} hasn't chatted enough to have a rank yet!")
+            await ctx.send(f"❌ {member.mention} hasn't chatted enough to have a rank yet!")
 
     @commands.command(name="leaderboard", aliases=["lb"])
     async def prefix_leaderboard(self, ctx):
@@ -524,26 +535,7 @@ class LevelBot(commands.Cog):
 
 
 # ==========================================
-# CARD BUTTON VIEW
-# ==========================================
-class CardButton(discord.ui.View):
-    def __init__(self, dashboard_url):
-        super().__init__(timeout=None)
-        self.dashboard_url = dashboard_url
-
-    @discord.ui.button(label="/card", style=discord.ButtonStyle.primary, emoji="🎨")
-    async def card_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        clicker_id = str(interaction.user.id)
-        guild_id = str(interaction.guild.id)
-        specific_url = f"{self.dashboard_url}/dashboard/{guild_id}/{clicker_id}"
-        await interaction.response.send_message(
-            f"🔗 Click this link to edit **your** rank card:\n{specific_url}",
-            ephemeral=True
-        )
-
-
-# ==========================================
-# SLASH COMMAND GROUP
+# CLASS 2: SLASH COMMANDS (/level, /leaderboard, etc.)
 # ==========================================
 class LevelSlashCommands(commands.Cog):
     def __init__(self, bot):
@@ -654,4 +646,155 @@ class LevelSlashCommands(commands.Cog):
         if cog.bypass_users:
             bypass_members = []
             for user_id in cog.bypass_users:
-                member = interaction
+                member = interaction.guild.get_member(int(user_id))
+                bypass_members.append(member.mention if member else f"User ID: `{user_id}`")
+            embed.add_field(name="👤 Bypass Users", value="\n".join(bypass_members), inline=False)
+        else: embed.add_field(name="👤 Bypass Users", value="None", inline=False)
+        if cog.bypass_roles:
+            bypass_roles = []
+            for role_id in cog.bypass_roles:
+                role = interaction.guild.get_role(int(role_id))
+                bypass_roles.append(role.mention if role else f"Role ID: `{role_id}`")
+            embed.add_field(name="👥 Bypass Roles", value="\n".join(bypass_roles), inline=False)
+        else: embed.add_field(name="👥 Bypass Roles", value="None", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="setlevelchannel", description="[Admin] Set the channel where Level-Up announcements are sent")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def slash_setlevelchannel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        cog = self.get_cog()
+        if not cog: return await interaction.response.send_message("❌ Cog not loaded.", ephemeral=True)
+        cog.level_channel_id = channel.id
+        cog.save_config()
+        await interaction.response.send_message(f"✅ Level-Up announcements will now be sent to {channel.mention}!", ephemeral=True)
+
+    @app_commands.command(name="addxp", description="[Admin] Manually add XP to a user")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def slash_addxp(self, interaction: discord.Interaction, member: discord.Member, amount: float):
+        cog = self.get_cog()
+        if not cog: return await interaction.response.send_message("❌ Cog not loaded.", ephemeral=True)
+        if amount > 10000000:
+            return await interaction.response.send_message("❌ You cannot add more than 10,000,000 XP at once!", ephemeral=True)
+        await cog._add_xp_to_db(str(interaction.guild.id), str(member.id), amount)
+        await interaction.response.send_message(f"✅ Successfully added **{amount} XP** to `{member.display_name}`.", ephemeral=True)
+
+    @app_commands.command(name="removexp", description="[Admin] Manually remove XP from a user")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def slash_removexp(self, interaction: discord.Interaction, member: discord.Member, amount: float):
+        cog = self.get_cog()
+        if not cog: return await interaction.response.send_message("❌ Cog not loaded.", ephemeral=True)
+        guild_id = str(interaction.guild.id)
+        user_id = str(member.id)
+        doc = levels_collection.find_one({"guild_id": guild_id, "user_id": user_id})
+        if not doc:
+            return await interaction.response.send_message("❌ User doesn't have any XP to remove!", ephemeral=True)
+        current_xp = doc["xp"]
+        if current_xp < amount:
+            return await interaction.response.send_message(f"❌ User only has {current_xp:,} XP. You cannot remove {amount} XP!", ephemeral=True)
+        new_xp = round(current_xp - amount)
+        if new_xp < 0: new_xp = 0
+        levels_collection.update_one({"guild_id": guild_id, "user_id": user_id}, {"$set": {"xp": new_xp}})
+        new_level = cog.get_level_from_xp(new_xp)
+        await interaction.response.send_message(f"✅ Removed **{amount} XP** from `{member.display_name}`.\nThey are now at Level {new_level}.", ephemeral=True)
+
+    @app_commands.command(name="autosetuplevelroles", description="[Admin] Automatically creates level roles up to Level 100")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def slash_autosetuplevelroles(self, interaction: discord.Interaction):
+        cog = self.get_cog()
+        if not cog: return await interaction.response.send_message("❌ Cog not loaded.", ephemeral=True)
+        guild = interaction.guild
+        created_roles, existing_roles = [], []
+        for level in cog.levels:
+            role_name = f"Level {level}"
+            role = discord.utils.get(guild.roles, name=role_name)
+            if not role:
+                try:
+                    new_role = await guild.create_role(name=role_name, color=cog.get_role_color(level), permissions=cog.get_role_permissions(level))
+                    created_roles.append(new_role.name)
+                except:
+                    return await interaction.response.send_message("❌ Missing perms to create roles.", ephemeral=True)
+            else:
+                try:
+                    await role.edit(color=cog.get_role_color(level), permissions=cog.get_role_permissions(level))
+                    existing_roles.append(role.name)
+                except:
+                    await interaction.response.send_message(f"⚠️ Could not update {role.name}", ephemeral=True)
+        
+        for level in cog.levels:
+            role = discord.utils.get(guild.roles, name=f"Level {level}")
+            if role:
+                roles_collection.update_one({"guild_id": str(guild.id), "level": level}, {"$set": {"role_id": role.id}}, upsert=True)
+        
+        embed = discord.Embed(title="✅ Setup Complete", color=discord.Color.green())
+        embed.add_field(name="Created", value=str(len(created_roles)), inline=True)
+        embed.add_field(name="Updated", value=str(len(existing_roles)), inline=True)
+        if created_roles: embed.add_field(name="New Roles", value=", ".join(created_roles), inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="removealllevelroles", description="[Admin] Deletes ALL level roles")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def slash_removealllevelroles(self, interaction: discord.Interaction):
+        cog = self.get_cog()
+        if not cog: return await interaction.response.send_message("❌ Cog not loaded.", ephemeral=True)
+        guild = interaction.guild
+        level_roles = [role for role in guild.roles if role.name in [f"Level {l}" for l in cog.levels]]
+        if not level_roles:
+            return await interaction.response.send_message("❌ No level roles found.", ephemeral=True)
+        deleted = 0
+        for role in level_roles:
+            try: await role.delete(); deleted += 1
+            except: pass
+        roles_collection.delete_many({"guild_id": str(guild.id)})
+        await interaction.response.send_message(f"✅ Deleted {deleted} level roles.", ephemeral=True)
+
+    @app_commands.command(name="addlevelrole", description="[Admin] Manually map a level to an existing role")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def slash_addlevelrole(self, interaction: discord.Interaction, level: int, role: discord.Role):
+        cog = self.get_cog()
+        if not cog: return await interaction.response.send_message("❌ Cog not loaded.", ephemeral=True)
+        if level not in cog.levels:
+            return await interaction.response.send_message(f"❌ Invalid level! Choose from: {', '.join(map(str, cog.levels))}", ephemeral=True)
+        roles_collection.update_one({"guild_id": str(interaction.guild.id), "level": level}, {"$set": {"role_id": role.id}}, upsert=True)
+        await interaction.response.send_message(f"✅ Added Level {level} -> {role.mention}", ephemeral=True)
+
+    @app_commands.command(name="removelevelrole", description="[Admin] Remove a level role mapping")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def slash_removelevelrole(self, interaction: discord.Interaction, level: int):
+        cog = self.get_cog()
+        if not cog: return await interaction.response.send_message("❌ Cog not loaded.", ephemeral=True)
+        roles_collection.delete_one({"guild_id": str(interaction.guild.id), "level": level})
+        await interaction.response.send_message(f"✅ Removed Level {level} mapping.", ephemeral=True)
+
+    @app_commands.command(name="listlevelroles", description="[Admin] List all mapped level roles")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def slash_listlevelroles(self, interaction: discord.Interaction):
+        cog = self.get_cog()
+        if not cog: return await interaction.response.send_message("❌ Cog not loaded.", ephemeral=True)
+        results = roles_collection.find({"guild_id": str(interaction.guild.id)}).sort("level", 1)
+        embed = discord.Embed(title="📋 Level Roles", color=discord.Color.blue())
+        for doc in results:
+            level = doc["level"]
+            role_id = doc["role_id"]
+            role = interaction.guild.get_role(role_id)
+            if role:
+                perms = cog.get_role_permissions(level)
+                perm_list = []
+                if perms.attach_files: perm_list.append("📎 Files")
+                if perms.embed_links: perm_list.append("🔗 Embeds")
+                embed.add_field(name=f"Level {level}", value=f"{role.mention}\n*{', '.join(perm_list) if perm_list else 'Base'}*", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ==========================================
+# SETUP FUNCTION (Fixes the "no setup function" error)
+# ==========================================
+async def setup(bot):
+    await bot.add_cog(LevelBot(bot))
+    await bot.add_cog(LevelSlashCommands(bot))
