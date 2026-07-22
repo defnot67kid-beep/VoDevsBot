@@ -49,7 +49,8 @@ class AdminActionConsumer(commands.Cog):
                 elif action_type == 'ban':
                     await member.ban(reason=reason)
                 elif action_type == 'timeout':
-                    await member.timeout(discord.utils.utcnow() + discord.timedelta(seconds=duration), reason=reason)
+                    # FIX: Use discord.utils.timedelta
+                    await member.timeout(discord.utils.utcnow() + discord.utils.timedelta(seconds=duration), reason=reason)
                 elif action_type == 'mute':
                     muted_role = discord.utils.get(guild.roles, name="Muted")
                     if not muted_role:
