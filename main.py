@@ -245,9 +245,10 @@ async def load_cogs():
         await bot.load_extension("cogs.pingperm")
         await bot.load_extension("cogs.poll")
         await bot.load_extension("cogs.autorr")        # <--- YOUR AUTORR
-        await bot.load_extension("cogs.giverole")      # <--- NEW GIVEROLE COG ADDED HERE
+        await bot.load_extension("cogs.giverole")      # <--- NEW GIVEROLE COG
         await bot.load_extension("cogs.logging_audit")
         await bot.load_extension("cogs.permissions")   # <--- NEW PERMISSIONS COG
+        await bot.load_extension("cogs.admingiver")    # <--- NEW ADMINGIVER COG
         
         # Optional cogs (can be disabled if needed)
         try:
