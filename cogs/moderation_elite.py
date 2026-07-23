@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-import asyncio  # FIXED: Added missing import
+import asyncio
 import datetime
 
 class ModerationElite(commands.Cog):
@@ -10,24 +10,36 @@ class ModerationElite(commands.Cog):
         self.bot = bot
         self.warnings = {}  # guild_id -> {user_id: [warnings]}
 
+    # ==========================================
+    # INTERNAL METHOD FOR DASHBOARD INTEGRATION
+    # ==========================================
+    async def public_warn(self, guild_id: int, user_id: int, reason: str, moderator_name: str = "Dashboard"):
+        """Allows the Admin Dashboard to issue warnings directly into the local dictionary."""
+        g_id = str(guild_id)
+        u_id = str(user_id)
+        
+        if g_id not in self.warnings:
+            self.warnings[g_id] = {}
+        if u_id not in self.warnings[g_id]:
+            self.warnings[g_id][u_id] = []
+        
+        self.warnings[g_id][u_id].append({
+            "reason": reason,
+            "moderator": moderator_name,
+            "timestamp": datetime.datetime.now().isoformat()
+        })
+        
+        return True
+
+    # ==========================================
+    # STANDARD DISCORD COMMANDS
+    # ==========================================
+
     @commands.command(name="warn")
     @commands.has_permissions(kick_members=True)
     async def warn(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         """Warn a user"""
-        guild_id = str(ctx.guild.id)
-        user_id = str(member.id)
-        
-        if guild_id not in self.warnings:
-            self.warnings[guild_id] = {}
-        if user_id not in self.warnings[guild_id]:
-            self.warnings[guild_id][user_id] = []
-        
-        self.warnings[guild_id][user_id].append({
-            "reason": reason,
-            "moderator": ctx.author.name,
-            "timestamp": datetime.datetime.now().isoformat()
-        })
-        
+        await self.public_warn(ctx.guild.id, member.id, reason, ctx.author.name)
         await ctx.send(f"⚠️ {member.mention} has been warned. Reason: **{reason}**")
         try:
             await member.send(f"You have been warned in **{ctx.guild.name}**. Reason: {reason}")
@@ -72,7 +84,6 @@ class ModerationElite(commands.Cog):
     @commands.has_permissions(moderate_members=True)
     async def mute(self, ctx, member: discord.Member, duration: str = "5m", *, reason: str = "No reason"):
         """Mute a user"""
-        # Parse duration
         seconds = 0
         if duration.endswith("s"):
             seconds = int(duration[:-1])
@@ -81,7 +92,7 @@ class ModerationElite(commands.Cog):
         elif duration.endswith("h"):
             seconds = int(duration[:-1]) * 3600
         else:
-            seconds = 300  # Default 5 minutes
+            seconds = 300
         
         await member.timeout(datetime.timedelta(seconds=seconds), reason=reason)
         await ctx.send(f"🔇 {member.mention} has been muted for **{duration}**. Reason: {reason}")
@@ -119,20 +130,18 @@ class ModerationElite(commands.Cog):
     @commands.has_permissions(ban_members=True)
     async def temp_ban(self, ctx, member: discord.Member, duration: str, *, reason: str = "No reason"):
         """Temporarily ban a user"""
-        # Parse duration
         seconds = 0
         if duration.endswith("h"):
             seconds = int(duration[:-1]) * 3600
         elif duration.endswith("d"):
             seconds = int(duration[:-1]) * 86400
         else:
-            seconds = 86400  # Default 1 day
+            seconds = 86400
         
         await member.ban(reason=reason)
         await ctx.send(f"🔨 {member.mention} has been banned for **{duration}**. Reason: **{reason}**")
         
         await asyncio.sleep(seconds)
-        
         try:
             await member.unban(reason="Temp ban expired")
             await ctx.send(f"✅ {member.mention} has been unbanned (temp ban expired).")
