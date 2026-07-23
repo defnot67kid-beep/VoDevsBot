@@ -12,7 +12,7 @@ client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
-server_configs_collection = db["server_configs"]  # <-- NEW
+server_configs_collection = db["server_configs"]
 
 def parse_duration(text):
     text = text.lower().strip()
@@ -74,27 +74,40 @@ class AdminActionConsumer(commands.Cog):
                     elif action_type == 'mute':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'warn':
-                        # Get the warning channel ID
-                        config = server_configs_collection.find_one({"guild_id": str(guild.id)})
-                        warn_channel_id = config.get("warn_channel_id") if config else None
-                        
-                        # Send the warning embed
-                        if warn_channel_id:
-                            warn_channel = guild.get_channel(int(warn_channel_id))
-                            if warn_channel and isinstance(warn_channel, discord.TextChannel):
-                                embed = discord.Embed(
-                                    title="⚠️ User Warned",
-                                    description=f"**User:** {member.mention}\n**Reason:** {reason}",
-                                    color=discord.Color.orange()
-                                )
-                                embed.set_footer(text=f"Moderator: Dashboard")
-                                await warn_channel.send(embed=embed)
-                        
-                        print(f"✅ [BOT] Executed WARN on {member.display_name}")
-                        
+                        # =====================================================
+                        # CALL THE MODERATION_ELITE WARNING SYSTEM HERE
+                        # =====================================================
+                        moderation_cog = self.bot.get_cog("ModerationElite")
+                        if moderation_cog:
+                            await moderation_cog.public_warn(
+                                guild_id=guild.id,
+                                user_id=member.id,
+                                reason=reason,
+                                moderator_name="Dashboard"
+                            )
+                            print(f"✅ [BOT] Executed WARN on {member.display_name} (via ModerationElite)")
+                            
+                            # Send log to Warn Channel if configured
+                            config = server_configs_collection.find_one({"guild_id": str(guild.id)})
+                            warn_channel_id = config.get("warn_channel_id") if config else None
+                            if warn_channel_id:
+                                warn_channel = guild.get_channel(int(warn_channel_id))
+                                if warn_channel and isinstance(warn_channel, discord.TextChannel):
+                                    embed = discord.Embed(
+                                        title="⚠️ User Warned",
+                                        description=f"**User:** {member.mention}\n**Reason:** {reason}",
+                                        color=discord.Color.orange()
+                                    )
+                                    embed.set_footer(text=f"Moderator: Dashboard")
+                                    await warn_channel.send(embed=embed)
+                        else:
+                            raise Exception("ModerationElite cog not found!")
+                            
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
-                print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
+                
+                if action_type != 'warn':
+                    print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
 
             # ==========================================
             # 2. ANNOUNCEMENTS
