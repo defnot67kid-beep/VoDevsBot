@@ -71,9 +71,9 @@ class AdminActionConsumer(commands.Cog):
                     elif action_type == 'timeout':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'mute':
-                        muted_role = discord.utils.get(guild.roles, name="Muted")
-                        if not muted_role: raise Exception("No 'Muted' role exists.")
-                        await member.add_roles(muted_role, reason=reason)
+                        # UPDATED: Uses Discord's built-in Timeout feature instead of a manual role.
+                        # This automatically UNMUTES the user when the time expires!
+                        await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
                 print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
