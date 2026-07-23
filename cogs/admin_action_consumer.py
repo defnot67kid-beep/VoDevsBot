@@ -72,7 +72,7 @@ class AdminActionConsumer(commands.Cog):
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'mute':
                         muted_role = discord.utils.get(guild.roles, name="Muted")
-                        if not muted_role: raise Exception("No 'Muted' role exists. Create a role named 'Muted'.")
+                        if not muted_role: raise Exception("No 'Muted' role exists.")
                         await member.add_roles(muted_role, reason=reason)
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
@@ -89,7 +89,7 @@ class AdminActionConsumer(commands.Cog):
                 print(f"✅ [BOT] Sent announcement to {channel.name}")
 
             # ==========================================
-            # 3. REACTION ROLES
+            # 3. REACTION ROLES (Create Menu)
             # ==========================================
             elif action['type'] == 'reaction_role':
                 channel_id = int(action.get('channel_id'))
@@ -125,7 +125,38 @@ class AdminActionConsumer(commands.Cog):
                 print(f"✅ [BOT] Created Reaction Role menu in {channel.name}")
 
             # ==========================================
-            # 4. POLLS
+            # 4. ADD REACTION ROLE (Add to existing menu)
+            # ==========================================
+            elif action['type'] == 'add_reaction_role':
+                message_id = action.get('message_id')
+                
+                # Find the menu in the database
+                rr_data = reaction_roles_collection.find_one({"message_id": message_id})
+                if not rr_data: raise Exception("Reaction Role menu not found. Was it deleted?")
+                
+                # Add the new role to the menu's list
+                new_role = {"emoji": action['emoji'], "role_id": action['role_id'], "description": action.get('description', '')}
+                
+                # Update MongoDB
+                reaction_roles_collection.update_one(
+                    {"message_id": message_id},
+                    {"$push": {"roles": new_role}}
+                )
+                
+                # Try to add the reaction to the live message
+                try:
+                    channel = guild.get_channel(int(rr_data['channel_id']))
+                    if channel:
+                        msg = await channel.fetch_message(int(message_id))
+                        await msg.add_reaction(action['emoji'])
+                        print(f"✅ Added reaction {action['emoji']} to menu {message_id}")
+                except Exception as e:
+                    print(f"⚠️ Could not add reaction to live message: {e}")
+                    
+                print(f"✅ Added role to reaction menu {message_id}")
+
+            # ==========================================
+            # 5. POLLS
             # ==========================================
             elif action['type'] == 'poll':
                 channel_id = int(action.get('channel_id', 0))
