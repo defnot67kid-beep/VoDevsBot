@@ -12,6 +12,7 @@ client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
+server_configs_collection = db["server_configs"]  # <-- NEW
 
 def parse_duration(text):
     text = text.lower().strip()
@@ -47,7 +48,7 @@ class AdminActionConsumer(commands.Cog):
                 return
 
             # ==========================================
-            # 1. MOD ACTIONS (Kick, Ban, Unban, Timeout, Mute)
+            # 1. MOD ACTIONS (Kick, Ban, Unban, Timeout, Mute, Warn)
             # ==========================================
             if action['type'] == 'mod_action':
                 user_id = int(action.get('user_id'))
@@ -71,9 +72,26 @@ class AdminActionConsumer(commands.Cog):
                     elif action_type == 'timeout':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'mute':
-                        # UPDATED: Uses Discord's built-in Timeout feature instead of a manual role.
-                        # This automatically UNMUTES the user when the time expires!
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
+                    elif action_type == 'warn':
+                        # Get the warning channel ID
+                        config = server_configs_collection.find_one({"guild_id": str(guild.id)})
+                        warn_channel_id = config.get("warn_channel_id") if config else None
+                        
+                        # Send the warning embed
+                        if warn_channel_id:
+                            warn_channel = guild.get_channel(int(warn_channel_id))
+                            if warn_channel and isinstance(warn_channel, discord.TextChannel):
+                                embed = discord.Embed(
+                                    title="⚠️ User Warned",
+                                    description=f"**User:** {member.mention}\n**Reason:** {reason}",
+                                    color=discord.Color.orange()
+                                )
+                                embed.set_footer(text=f"Moderator: Dashboard")
+                                await warn_channel.send(embed=embed)
+                        
+                        print(f"✅ [BOT] Executed WARN on {member.display_name}")
+                        
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
                 print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
@@ -129,30 +147,17 @@ class AdminActionConsumer(commands.Cog):
             # ==========================================
             elif action['type'] == 'add_reaction_role':
                 message_id = action.get('message_id')
-                
-                # Find the menu in the database
                 rr_data = reaction_roles_collection.find_one({"message_id": message_id})
-                if not rr_data: raise Exception("Reaction Role menu not found. Was it deleted?")
-                
-                # Add the new role to the menu's list
+                if not rr_data: raise Exception("Reaction Role menu not found.")
                 new_role = {"emoji": action['emoji'], "role_id": action['role_id'], "description": action.get('description', '')}
-                
-                # Update MongoDB
-                reaction_roles_collection.update_one(
-                    {"message_id": message_id},
-                    {"$push": {"roles": new_role}}
-                )
-                
-                # Try to add the reaction to the live message
+                reaction_roles_collection.update_one({"message_id": message_id}, {"$push": {"roles": new_role}})
                 try:
                     channel = guild.get_channel(int(rr_data['channel_id']))
                     if channel:
                         msg = await channel.fetch_message(int(message_id))
                         await msg.add_reaction(action['emoji'])
                         print(f"✅ Added reaction {action['emoji']} to menu {message_id}")
-                except Exception as e:
-                    print(f"⚠️ Could not add reaction to live message: {e}")
-                    
+                except: pass
                 print(f"✅ Added role to reaction menu {message_id}")
 
             # ==========================================
@@ -176,7 +181,6 @@ class AdminActionConsumer(commands.Cog):
                 )
                 embed.set_footer(text=f"Type: {'Multiple' if poll_type == 'multiple' else 'Single'} Choice")
                 sent_msg = await channel.send(embed=embed)
-                
                 emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
                 for i in range(len(options)):
                     if i < len(emojis): await sent_msg.add_reaction(emojis[i])
@@ -195,8 +199,7 @@ class AdminActionConsumer(commands.Cog):
 
     @consume_actions.after_loop
     async def after_consume_actions(self):
-        if self.consume_actions.is_being_cancelled():
-            print("⚠️ [BOT] Admin Action Consumer loop was cancelled.")
+        if self.consume_actions.is_being_cancelled(): print("⚠️ [BOT] Admin Action Consumer loop was cancelled.")
 
     # ==========================================
     # REACTION ROLE EVENT LISTENERS
