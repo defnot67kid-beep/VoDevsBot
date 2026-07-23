@@ -75,33 +75,28 @@ class AdminActionConsumer(commands.Cog):
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'warn':
                         # =====================================================
-                        # CALL THE MODERATION_ELITE WARNING SYSTEM HERE
+                        # SIMPLE WARNING LOGGING (Does NOT touch moderation_elite)
                         # =====================================================
-                        moderation_cog = self.bot.get_cog("ModerationElite")
-                        if moderation_cog:
-                            await moderation_cog.public_warn(
-                                guild_id=guild.id,
-                                user_id=member.id,
-                                reason=reason,
-                                moderator_name="Dashboard"
-                            )
-                            print(f"✅ [BOT] Executed WARN on {member.display_name} (via ModerationElite)")
-                            
-                            # Send log to Warn Channel if configured
-                            config = server_configs_collection.find_one({"guild_id": str(guild.id)})
-                            warn_channel_id = config.get("warn_channel_id") if config else None
-                            if warn_channel_id:
-                                warn_channel = guild.get_channel(int(warn_channel_id))
-                                if warn_channel and isinstance(warn_channel, discord.TextChannel):
-                                    embed = discord.Embed(
-                                        title="⚠️ User Warned",
-                                        description=f"**User:** {member.mention}\n**Reason:** {reason}",
-                                        color=discord.Color.orange()
-                                    )
-                                    embed.set_footer(text=f"Moderator: Dashboard")
-                                    await warn_channel.send(embed=embed)
+                        print(f"✅ [BOT] Executed WARN on {member.display_name}")
+                        
+                        # Get the configured warn channel
+                        config = server_configs_collection.find_one({"guild_id": str(guild.id)})
+                        warn_channel_id = config.get("warn_channel_id") if config else None
+                        
+                        if warn_channel_id:
+                            warn_channel = guild.get_channel(int(warn_channel_id))
+                            if warn_channel and isinstance(warn_channel, discord.TextChannel):
+                                embed = discord.Embed(
+                                    title="⚠️ User Warned",
+                                    description=f"**User:** {member.mention}\n**Reason:** {reason}",
+                                    color=discord.Color.orange()
+                                )
+                                embed.set_footer(text=f"Moderator: Dashboard")
+                                await warn_channel.send(embed=embed)
+                            else:
+                                print(f"⚠️ Warn channel {warn_channel_id} not found or invalid.")
                         else:
-                            raise Exception("ModerationElite cog not found!")
+                            print("⚠️ No warn channel configured. Go to the Owner Panel to set one.")
                             
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
