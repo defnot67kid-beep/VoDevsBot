@@ -19,9 +19,8 @@ def parse_duration(text):
     elif text.endswith("m"): return int(text[:-1]) * 60
     elif text.endswith("h"): return int(text[:-1]) * 3600
     elif text.endswith("d"): return int(text[:-1]) * 86400
-    else:
-        try: return int(text)
-        except ValueError: return 600
+    try: return int(text)
+    except ValueError: return 600
 
 class AdminActionConsumer(commands.Cog):
     def __init__(self, bot):
@@ -39,7 +38,7 @@ class AdminActionConsumer(commands.Cog):
         )
         if not action: return
 
-        print(f"⚠️ Processing Action: {action['type']}")
+        print(f"⚠️ [BOT] Processing Action: {action['type']}")
         try:
             guild_id = int(action.get('guild_id'))
             guild = self.bot.get_guild(guild_id)
@@ -47,9 +46,9 @@ class AdminActionConsumer(commands.Cog):
                 admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": "Guild not found"}})
                 return
 
-            # ========================================
+            # ==========================================
             # 1. MOD ACTIONS (Kick, Ban, Unban, Timeout, Mute)
-            # ========================================
+            # ==========================================
             if action['type'] == 'mod_action':
                 user_id = int(action.get('user_id'))
                 member = guild.get_member(user_id)
@@ -73,25 +72,25 @@ class AdminActionConsumer(commands.Cog):
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'mute':
                         muted_role = discord.utils.get(guild.roles, name="Muted")
-                        if not muted_role: raise Exception("No 'Muted' role exists.")
+                        if not muted_role: raise Exception("No 'Muted' role exists. Create a role named 'Muted'.")
                         await member.add_roles(muted_role, reason=reason)
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
-                print(f"✅ Executed {action_type.upper()} on {member.display_name}")
+                print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
 
-            # ========================================
+            # ==========================================
             # 2. ANNOUNCEMENTS
-            # ========================================
+            # ==========================================
             elif action['type'] == 'announcement':
-                channel_id = int(action.get('channel_id', '0'))
+                channel_id = int(action.get('channel_id', 0))
                 channel = guild.get_channel(channel_id)
                 if not channel or not isinstance(channel, discord.TextChannel): raise Exception("Invalid text channel.")
                 await channel.send(action.get('content', ''))
-                print(f"✅ Sent announcement to {channel.name}")
+                print(f"✅ [BOT] Sent announcement to {channel.name}")
 
-            # ========================================
+            # ==========================================
             # 3. REACTION ROLES
-            # ========================================
+            # ==========================================
             elif action['type'] == 'reaction_role':
                 channel_id = int(action.get('channel_id'))
                 channel = guild.get_channel(channel_id)
@@ -123,13 +122,13 @@ class AdminActionConsumer(commands.Cog):
                     "guild_id": str(guild.id), "channel_id": str(channel.id),
                     "message_id": str(sent_msg.id), "roles": roles_list
                 })
-                print(f"✅ Created Reaction Role menu in {channel.name}")
+                print(f"✅ [BOT] Created Reaction Role menu in {channel.name}")
 
-            # ========================================
+            # ==========================================
             # 4. POLLS
-            # ========================================
+            # ==========================================
             elif action['type'] == 'poll':
-                channel_id = int(action.get('channel_id', '0'))
+                channel_id = int(action.get('channel_id', 0))
                 channel = guild.get_channel(channel_id)
                 if not channel or not isinstance(channel, discord.TextChannel): raise Exception("Invalid text channel.")
 
@@ -150,26 +149,26 @@ class AdminActionConsumer(commands.Cog):
                 emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
                 for i in range(len(options)):
                     if i < len(emojis): await sent_msg.add_reaction(emojis[i])
-                print(f"✅ Created Poll in {channel.name}")
+                print(f"✅ [BOT] Created Poll in {channel.name}")
 
             admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
         except Exception as e:
-            print(f"❌ Action Failed: {e}")
+            print(f"❌ [BOT] Action Failed: {e}")
             admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": str(e)}})
 
     @consume_actions.before_loop
     async def before_consume_actions(self):
         await self.bot.wait_until_ready()
-        print("🚀 Admin Action Consumer is starting...")
+        print("🚀 [BOT] Admin Action Consumer is starting...")
 
     @consume_actions.after_loop
     async def after_consume_actions(self):
         if self.consume_actions.is_being_cancelled():
-            print("⚠️ Admin Action Consumer loop was cancelled.")
+            print("⚠️ [BOT] Admin Action Consumer loop was cancelled.")
 
     # ==========================================
-    # REACTION ROLE LISTENERS
+    # REACTION ROLE EVENT LISTENERS
     # ==========================================
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
