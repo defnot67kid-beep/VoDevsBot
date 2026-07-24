@@ -12,12 +12,13 @@ client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
-warning_users = db["warning_users"]  # <--- ALL WARNINGS GO HERE
+warning_users = db["warning_users"]
 
 # ==========================================
-# HARDCODED WARNING CHANNEL
+# HARDCODED WARNING CHANNEL & BAD WORDS LIST
 # ==========================================
 WARN_CHANNEL_ID = 1528330771562106965
+BAD_WORDS = ["nigger", "nigga", "faggot", "retard", "kike", "chink", "spic", "gook", "cunt", "whore", "slut", "rape", "pedophile"]
 
 def parse_duration(text):
     text = text.lower().strip()
@@ -36,6 +37,9 @@ class AdminActionConsumer(commands.Cog):
     def cog_unload(self):
         self.consume_actions.cancel()
 
+    # ==========================================
+    # 1. CONSUME DASHBOARD ACTIONS
+    # ==========================================
     @tasks.loop(seconds=5)
     async def consume_actions(self):
         action = admin_actions_collection.find_one_and_update(
@@ -52,9 +56,6 @@ class AdminActionConsumer(commands.Cog):
                 admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": "Guild not found"}})
                 return
 
-            # ==========================================
-            # 1. MOD ACTIONS (Kick, Ban, Unban, Timeout, Mute, Warn)
-            # ==========================================
             if action['type'] == 'mod_action':
                 user_id = int(action.get('user_id'))
                 member = guild.get_member(user_id)
@@ -67,6 +68,7 @@ class AdminActionConsumer(commands.Cog):
                 action_type = action.get('action')
                 reason = action.get('reason', 'No reason provided.')
                 duration = int(action.get('duration', 60))
+                moderator_name = action.get('moderator_name', 'Dashboard')
 
                 try:
                     if action_type == 'kick': 
@@ -82,72 +84,15 @@ class AdminActionConsumer(commands.Cog):
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'warn':
                         # ==========================================
-                        # 1. SAVE THE WARNING TO MONGODB
+                        # MANUAL WARNING FROM DASHBOARD
                         # ==========================================
-                        warning_users.update_one(
-                            {"guild_id": str(guild.id), "user_id": str(member.id)},
-                            {"$push": {"warnings": {
-                                "reason": reason,
-                                "moderator": "Dashboard",
-                                "timestamp": datetime.utcnow().isoformat()
-                            }}},
-                            upsert=True
-                        )
-                        print(f"✅ [BOT] Warning saved for {member.display_name}")
-
-                        # ==========================================
-                        # 2. GET TOTAL WARNING COUNT
-                        # ==========================================
-                        user_data = warning_users.find_one({"guild_id": str(guild.id), "user_id": str(member.id)})
-                        warn_count = len(user_data["warnings"]) if user_data else 0
-                        print(f"⚖️ {member.display_name} now has {warn_count} warnings.")
-
-                        # ==========================================
-                        # 3. CHECK THRESHOLDS & APPLY PUNISHMENT
-                        # ==========================================
-                        if warn_count >= 7:
-                            # 7 warnings = 5-day ban
-                            await member.ban(reason="7 warnings reached (5-day ban).")
-                            print(f"🔨 {member.display_name} was BANNED for 5 days (7 warnings).")
-                        elif warn_count == 6:
-                            # 6 warnings = 5-day ban
-                            await member.ban(reason="6 warnings reached (5-day ban).")
-                            print(f"🔨 {member.display_name} was BANNED for 5 days (6 warnings).")
-                        elif warn_count == 5:
-                            # 5 warnings = 7-day mute
-                            await member.timeout(discord.utils.utcnow() + timedelta(days=7), reason="5 warnings reached (7-day mute).")
-                            print(f"🔇 {member.display_name} was MUTED for 7 days (5 warnings).")
-                        elif warn_count == 4:
-                            # 4 warnings = 1-day mute
-                            await member.timeout(discord.utils.utcnow() + timedelta(days=1), reason="4 warnings reached (1-day mute).")
-                            print(f"🔇 {member.display_name} was MUTED for 1 day (4 warnings).")
-                        elif warn_count == 3:
-                            # 3 warnings = 1-hour mute
-                            await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
-                            print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
-
-                        # ==========================================
-                        # 4. SEND LOG TO HARDCODED CHANNEL
-                        # ==========================================
-                        warn_channel = guild.get_channel(WARN_CHANNEL_ID)
-                        if warn_channel and isinstance(warn_channel, discord.TextChannel):
-                            embed = discord.Embed(
-                                title="⚠️ User Warned",
-                                description=f"**User:** {member.mention}\n**Reason:** {reason}\n**Total Warnings:** {warn_count}",
-                                color=discord.Color.orange()
-                            )
-                            embed.set_footer(text=f"Moderator: Dashboard")
-                            await warn_channel.send(embed=embed)
-
+                        await self.handle_warning(guild, member, reason, moderator_name)
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
                 
                 if action_type != 'warn':
                     print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
 
-            # ==========================================
-            # 2. ANNOUNCEMENTS
-            # ==========================================
             elif action['type'] == 'announcement':
                 channel_id = int(action.get('channel_id', 0))
                 channel = guild.get_channel(channel_id)
@@ -155,9 +100,6 @@ class AdminActionConsumer(commands.Cog):
                 await channel.send(action.get('content', ''))
                 print(f"✅ [BOT] Sent announcement to {channel.name}")
 
-            # ==========================================
-            # 3. REACTION ROLES (Create Menu)
-            # ==========================================
             elif action['type'] == 'reaction_role':
                 channel_id = int(action.get('channel_id'))
                 channel = guild.get_channel(channel_id)
@@ -191,9 +133,6 @@ class AdminActionConsumer(commands.Cog):
                 })
                 print(f"✅ [BOT] Created Reaction Role menu in {channel.name}")
 
-            # ==========================================
-            # 4. ADD REACTION ROLE (Add to existing menu)
-            # ==========================================
             elif action['type'] == 'add_reaction_role':
                 message_id = action.get('message_id')
                 rr_data = reaction_roles_collection.find_one({"message_id": message_id})
@@ -209,9 +148,6 @@ class AdminActionConsumer(commands.Cog):
                 except: pass
                 print(f"✅ Added role to reaction menu {message_id}")
 
-            # ==========================================
-            # 5. POLLS
-            # ==========================================
             elif action['type'] == 'poll':
                 channel_id = int(action.get('channel_id', 0))
                 channel = guild.get_channel(channel_id)
@@ -246,9 +182,84 @@ class AdminActionConsumer(commands.Cog):
         await self.bot.wait_until_ready()
         print("🚀 [BOT] Admin Action Consumer is starting...")
 
-    @consume_actions.after_loop
-    async def after_consume_actions(self):
-        if self.consume_actions.is_being_cancelled(): print("⚠️ [BOT] Admin Action Consumer loop was cancelled.")
+    # ==========================================
+    # 2. AUTO-WARNING LISTENER (MONITORS ALL MESSAGES)
+    # ==========================================
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot: return
+        if not message.guild: return
+
+        # Check for bad words (case insensitive)
+        lower_content = message.content.lower()
+        for word in BAD_WORDS:
+            if word in lower_content:
+                # Delete the offensive message
+                try:
+                    await message.delete()
+                except:
+                    pass
+
+                # Auto-warn the user
+                await self.handle_warning(
+                    guild=message.guild,
+                    member=message.author,
+                    reason=f"Auto-Mod: Used inappropriate language ({word})",
+                    moderator_name="Auto-Mod"
+                )
+                
+                # Send a follow-up message to the channel
+                await message.channel.send(f"⚠️ {message.author.mention}, your message was deleted for containing inappropriate language. You have been automatically warned.")
+                break
+
+    # ==========================================
+    # 3. SHARED WARNING HANDLER
+    # ==========================================
+    async def handle_warning(self, guild, member, reason, moderator_name):
+        # Save warning to MongoDB
+        warning_users.update_one(
+            {"guild_id": str(guild.id), "user_id": str(member.id)},
+            {"$push": {"warnings": {
+                "reason": reason,
+                "moderator": moderator_name,
+                "timestamp": datetime.utcnow().isoformat()
+            }}},
+            upsert=True
+        )
+        print(f"✅ [BOT] Warning saved for {member.display_name}")
+
+        # Get total warning count
+        user_data = warning_users.find_one({"guild_id": str(guild.id), "user_id": str(member.id)})
+        warn_count = len(user_data["warnings"]) if user_data else 0
+        print(f"⚖️ {member.display_name} now has {warn_count} warnings.")
+
+        # Check thresholds & apply punishment
+        if warn_count >= 7:
+            await member.ban(reason="7 warnings reached (5-day ban).")
+            print(f"🔨 {member.display_name} was BANNED for 5 days (7 warnings).")
+        elif warn_count == 6:
+            await member.ban(reason="6 warnings reached (5-day ban).")
+            print(f"🔨 {member.display_name} was BANNED for 5 days (6 warnings).")
+        elif warn_count == 5:
+            await member.timeout(discord.utils.utcnow() + timedelta(days=7), reason="5 warnings reached (7-day mute).")
+            print(f"🔇 {member.display_name} was MUTED for 7 days (5 warnings).")
+        elif warn_count == 4:
+            await member.timeout(discord.utils.utcnow() + timedelta(days=1), reason="4 warnings reached (1-day mute).")
+            print(f"🔇 {member.display_name} was MUTED for 1 day (4 warnings).")
+        elif warn_count == 3:
+            await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
+            print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
+
+        # Send log to hardcoded channel
+        warn_channel = guild.get_channel(WARN_CHANNEL_ID)
+        if warn_channel and isinstance(warn_channel, discord.TextChannel):
+            embed = discord.Embed(
+                title="⚠️ User Warned",
+                description=f"**User:** {member.mention}\n**Reason:** {reason}\n**Total Warnings:** {warn_count}",
+                color=discord.Color.orange()
+            )
+            embed.set_footer(text=f"Moderator: {moderator_name}")
+            await warn_channel.send(embed=embed)
 
     # ==========================================
     # REACTION ROLE EVENT LISTENERS
