@@ -13,6 +13,8 @@ if not MONGO_URI:
 client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
 rr_collection = db["reaction_roles"]
+admin_actions_collection = db["admin_actions"]  # Added to check queue
+pending_reaction_menus = db["pending_reaction_menus"] # Added for Dashboard feedback
 
 # ============================================
 # REACTION ROLE COG
@@ -20,6 +22,80 @@ rr_collection = db["reaction_roles"]
 class ReactionRoles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.check_admin_actions.start()
+
+    # ============================================
+    # BACKGROUND TASK: Check for Dashboard Actions
+    # ============================================
+    @tasks.loop(seconds=5)
+    async def check_admin_actions(self):
+        action = admin_actions_collection.find_one_and_update(
+            {"type": "reaction_role", "status": "pending"},
+            {"$set": {"status": "processing"}}
+        )
+        if not action:
+            return
+
+        print(f"⚠️ [ReactionRoles] Dashboard requested a new menu!")
+
+        try:
+            guild_id = int(action.get('guild_id'))
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": "Guild not found"}})
+                return
+
+            channel_id = int(action.get('channel_id'))
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": "Channel not found"}})
+                return
+
+            title = action.get('title', 'Get Roles!')
+            description = action.get('description', 'React below to get roles.')
+            color = discord.Color.from_str(action.get('color', '#5865F2'))
+            roles = action.get('roles', []) # Dashboard sends empty list for empty menu
+
+            embed = discord.Embed(title=title, description=description, color=color)
+            embed.set_footer(text="React to this message to receive roles!")
+
+            role_text = ""
+            for item in roles:
+                role = guild.get_role(item['role_id'])
+                role_mention = role.mention if role else "**Deleted Role**"
+                role_text += f"{item['emoji']} {role_mention} — *{item['description']}*\n"
+
+            if role_text:
+                embed.add_field(name="Available Roles", value=role_text, inline=False)
+            else:
+                embed.add_field(name="Available Roles", value="No roles added yet. Use `!rr-add` or Dashboard Step 2 to add them!", inline=False)
+
+            msg = await channel.send(embed=embed)
+
+            # Save to MongoDB
+            rr_collection.insert_one({
+                "message_id": str(msg.id),
+                "channel_id": channel.id,
+                "guild_id": guild.id,
+                "title": title,
+                "description": description,
+                "color": color.value,
+                "roles": {} 
+            })
+
+            # Notify Dashboard via the pending collection
+            pending_reaction_menus.insert_one({
+                "guild_id": str(guild.id),
+                "message_id": str(msg.id)
+            })
+
+            print(f"✅ [ReactionRoles] Menu created from Dashboard request! ID: {msg.id}")
+            
+            admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
+
+        except Exception as e:
+            print(f"❌ [ReactionRoles] Failed to process Dashboard request: {e}")
+            admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": str(e)}})
 
     # ============================================
     # ADMIN SETUP COMMAND (Creates the Menu)
