@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import pymongo
 import os
-from datetime import timedelta
+from datetime import timedelta, datetime
 
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
@@ -13,6 +13,7 @@ db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
 server_configs_collection = db["server_configs"]
+warnings_collection = db["warnings"]  # NEW COLLECTION FOR WARNINGS
 
 def parse_duration(text):
     text = text.lower().strip()
@@ -75,14 +76,20 @@ class AdminActionConsumer(commands.Cog):
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'warn':
                         # =====================================================
-                        # SIMPLE WARNING LOGGING (Does NOT touch moderation_elite)
+                        # SAVE WARNING TO MONGODB
                         # =====================================================
+                        warnings_collection.insert_one({
+                            "guild_id": str(guild.id),
+                            "user_id": str(member.id),
+                            "reason": reason,
+                            "moderator": "Dashboard",
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
                         print(f"✅ [BOT] Executed WARN on {member.display_name}")
                         
-                        # Get the configured warn channel
+                        # Send log to Warn Channel if configured
                         config = server_configs_collection.find_one({"guild_id": str(guild.id)})
                         warn_channel_id = config.get("warn_channel_id") if config else None
-                        
                         if warn_channel_id:
                             warn_channel = guild.get_channel(int(warn_channel_id))
                             if warn_channel and isinstance(warn_channel, discord.TextChannel):
@@ -93,10 +100,6 @@ class AdminActionConsumer(commands.Cog):
                                 )
                                 embed.set_footer(text=f"Moderator: Dashboard")
                                 await warn_channel.send(embed=embed)
-                            else:
-                                print(f"⚠️ Warn channel {warn_channel_id} not found or invalid.")
-                        else:
-                            print("⚠️ No warn channel configured. Go to the Owner Panel to set one.")
                             
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
