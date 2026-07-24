@@ -2,19 +2,29 @@ import discord
 from discord.ext import commands, tasks
 import pymongo
 import os
+import sys
 from datetime import timedelta, datetime
 
+# ==========================================
+# MONGO CONNECTION WITH SAFE RETRY
+# ==========================================
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     raise ValueError("❌ MONGO_URI environment variable is not set!")
 
-client = pymongo.MongoClient(MONGO_URI)
-db = client["vodevs_bot_data"]
-admin_actions_collection = db["admin_actions"]
-reaction_roles_collection = db["reaction_roles"]
-server_configs_collection = db["server_configs"]
-warnings_collection = db["warnings"]  # <--- Warnings go here now
+try:
+    client = pymongo.MongoClient(MONGO_URI)
+    db = client["vodevs_bot_data"]
+    admin_actions_collection = db["admin_actions"]
+    reaction_roles_collection = db["reaction_roles"]
+    server_configs_collection = db["server_configs"]
+    warnings_collection = db["warnings"]
+    print("✅ [CONSUMER] Connected to MongoDB successfully.")
+except Exception as e:
+    print(f"❌ [CONSUMER] Failed to connect to MongoDB: {e}")
+    sys.exit(1)
 
+# Helper to parse durations
 def parse_duration(text):
     text = text.lower().strip()
     if text.endswith("s"): return int(text[:-1])
@@ -34,18 +44,29 @@ class AdminActionConsumer(commands.Cog):
 
     @tasks.loop(seconds=5)
     async def consume_actions(self):
-        action = admin_actions_collection.find_one_and_update(
-            {"status": "pending"},
-            {"$set": {"status": "processing"}}
-        )
-        if not action: return
+        # 1. Attempt to find a pending action
+        action = None
+        try:
+            action = admin_actions_collection.find_one_and_update(
+                {"status": "pending"},
+                {"$set": {"status": "processing"}}
+            )
+        except Exception as e:
+            print(f"❌ [CONSUMER] MongoDB query failed: {e}")
+            return
 
-        print(f"⚠️ [BOT] Processing Action: {action['type']}")
+        if not action:
+            return
+
+        action_id = action["_id"]
+        print(f"⚠️ [CONSUMER] Processing Action ID {action_id} | Type: {action['type']}")
+
         try:
             guild_id = int(action.get('guild_id'))
             guild = self.bot.get_guild(guild_id)
             if not guild:
-                admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": "Guild not found"}})
+                admin_actions_collection.update_one({"_id": action_id}, {"$set": {"status": "failed", "error": "Guild not found"}})
+                print(f"❌ [CONSUMER] Guild {guild_id} not found.")
                 return
 
             # ==========================================
@@ -57,27 +78,40 @@ class AdminActionConsumer(commands.Cog):
                 if member is None:
                     try: member = await guild.fetch_member(user_id)
                     except discord.NotFound:
-                        admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": "Member not found"}})
+                        admin_actions_collection.update_one({"_id": action_id}, {"$set": {"status": "failed", "error": "Member not found"}})
+                        print(f"❌ [CONSUMER] Member {user_id} not found.")
                         return
 
                 action_type = action.get('action')
-                reason = action.get('reason', 'No reason provided.') # <--- This is the string
+                reason = action.get('reason', 'No reason provided.')
                 duration = int(action.get('duration', 60))
 
                 try:
-                    if action_type == 'kick': await member.kick(reason=reason)
-                    elif action_type == 'ban': await member.ban(reason=reason)
+                    if action_type == 'kick':
+                        await member.kick(reason=reason)
+                        print(f"✅ [CONSUMER] Kicked {member.display_name}")
+
+                    elif action_type == 'ban':
+                        await member.ban(reason=reason)
+                        print(f"✅ [CONSUMER] Banned {member.display_name}")
+
                     elif action_type == 'unban':
-                        try: await guild.unban(discord.Object(id=user_id), reason=reason)
-                        except discord.NotFound: raise Exception("User is not banned.")
+                        try:
+                            await guild.unban(discord.Object(id=user_id), reason=reason)
+                            print(f"✅ [CONSUMER] Unbanned User ID {user_id}")
+                        except discord.NotFound:
+                            raise Exception("User is not banned.")
+
                     elif action_type == 'timeout':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
+                        print(f"✅ [CONSUMER] Timed out {member.display_name} for {duration}s")
+
                     elif action_type == 'mute':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
+                        print(f"✅ [CONSUMER] Muted {member.display_name} for {duration}s")
+
                     elif action_type == 'warn':
-                        # =====================================================
-                        # SAVE WARNING TO MONGODB
-                        # =====================================================
+                        # Save warning to MongoDB
                         warnings_collection.insert_one({
                             "guild_id": str(guild.id),
                             "user_id": str(member.id),
@@ -85,7 +119,7 @@ class AdminActionConsumer(commands.Cog):
                             "moderator": "Dashboard",
                             "timestamp": datetime.utcnow().isoformat()
                         })
-                        print(f"✅ [BOT] Executed WARN on {member.display_name} for: {reason}")
+                        print(f"✅ [CONSUMER] Warned {member.display_name} for: {reason}")
                         
                         # Send log to Warn Channel if configured
                         config = server_configs_collection.find_one({"guild_id": str(guild.id)})
@@ -100,12 +134,12 @@ class AdminActionConsumer(commands.Cog):
                                 )
                                 embed.set_footer(text=f"Moderator: Dashboard")
                                 await warn_channel.send(embed=embed)
-                            
-                except discord.Forbidden: raise Exception("Bot missing permissions.")
-                except discord.NotFound: raise Exception("User/Role not found.")
-                
-                if action_type != 'warn':
-                    print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
+                                print(f"✅ [CONSUMER] Warning logged to {warn_channel.name}")
+
+                except discord.Forbidden:
+                    raise Exception("Bot missing permissions.")
+                except discord.NotFound:
+                    raise Exception("User/Role not found.")
 
             # ==========================================
             # 2. ANNOUNCEMENTS
@@ -113,9 +147,11 @@ class AdminActionConsumer(commands.Cog):
             elif action['type'] == 'announcement':
                 channel_id = int(action.get('channel_id', 0))
                 channel = guild.get_channel(channel_id)
-                if not channel or not isinstance(channel, discord.TextChannel): raise Exception("Invalid text channel.")
+                if not channel or not isinstance(channel, discord.TextChannel):
+                    raise Exception(f"Invalid text channel: {channel_id}")
+                
                 await channel.send(action.get('content', ''))
-                print(f"✅ [BOT] Sent announcement to {channel.name}")
+                print(f"✅ [CONSUMER] Sent announcement to {channel.name}")
 
             # ==========================================
             # 3. REACTION ROLES (Create Menu)
@@ -123,7 +159,8 @@ class AdminActionConsumer(commands.Cog):
             elif action['type'] == 'reaction_role':
                 channel_id = int(action.get('channel_id'))
                 channel = guild.get_channel(channel_id)
-                if not channel or not isinstance(channel, discord.TextChannel): raise Exception("Invalid text channel.")
+                if not channel or not isinstance(channel, discord.TextChannel):
+                    raise Exception("Invalid text channel.")
                 
                 try: color = discord.Color.from_str(action.get('color', '#5865F2'))
                 except: color = discord.Color.blurple()
@@ -151,7 +188,7 @@ class AdminActionConsumer(commands.Cog):
                     "guild_id": str(guild.id), "channel_id": str(channel.id),
                     "message_id": str(sent_msg.id), "roles": roles_list
                 })
-                print(f"✅ [BOT] Created Reaction Role menu in {channel.name}")
+                print(f"✅ [CONSUMER] Created Reaction Role menu in {channel.name}")
 
             # ==========================================
             # 4. ADD REACTION ROLE (Add to existing menu)
@@ -167,9 +204,9 @@ class AdminActionConsumer(commands.Cog):
                     if channel:
                         msg = await channel.fetch_message(int(message_id))
                         await msg.add_reaction(action['emoji'])
-                        print(f"✅ Added reaction {action['emoji']} to menu {message_id}")
+                        print(f"✅ [CONSUMER] Added reaction {action['emoji']} to menu {message_id}")
                 except: pass
-                print(f"✅ Added role to reaction menu {message_id}")
+                print(f"✅ [CONSUMER] Added role to reaction menu {message_id}")
 
             # ==========================================
             # 5. POLLS
@@ -177,7 +214,8 @@ class AdminActionConsumer(commands.Cog):
             elif action['type'] == 'poll':
                 channel_id = int(action.get('channel_id', 0))
                 channel = guild.get_channel(channel_id)
-                if not channel or not isinstance(channel, discord.TextChannel): raise Exception("Invalid text channel.")
+                if not channel or not isinstance(channel, discord.TextChannel):
+                    raise Exception("Invalid text channel.")
 
                 question = action.get('question', 'Poll')
                 options = action.get('options', [])
@@ -195,22 +233,27 @@ class AdminActionConsumer(commands.Cog):
                 emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
                 for i in range(len(options)):
                     if i < len(emojis): await sent_msg.add_reaction(emojis[i])
-                print(f"✅ [BOT] Created Poll in {channel.name}")
+                print(f"✅ [CONSUMER] Created Poll in {channel.name}")
 
-            admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
+            # ==========================================
+            # MARK AS COMPLETED
+            # ==========================================
+            admin_actions_collection.update_one({"_id": action_id}, {"$set": {"status": "completed"}})
+            print(f"✅ [CONSUMER] Action {action_id} marked as completed.")
 
         except Exception as e:
-            print(f"❌ [BOT] Action Failed: {e}")
-            admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": str(e)}})
+            print(f"❌ [CONSUMER] Action Failed: {e}")
+            admin_actions_collection.update_one({"_id": action_id}, {"$set": {"status": "failed", "error": str(e)}})
 
     @consume_actions.before_loop
     async def before_consume_actions(self):
         await self.bot.wait_until_ready()
-        print("🚀 [BOT] Admin Action Consumer is starting...")
+        print("🚀 [CONSUMER] Admin Action Consumer is starting...")
 
     @consume_actions.after_loop
     async def after_consume_actions(self):
-        if self.consume_actions.is_being_cancelled(): print("⚠️ [BOT] Admin Action Consumer loop was cancelled.")
+        if self.consume_actions.is_being_cancelled():
+            print("⚠️ [CONSUMER] Admin Action Consumer loop was cancelled.")
 
     # ==========================================
     # REACTION ROLE EVENT LISTENERS
