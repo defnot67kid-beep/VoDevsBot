@@ -15,8 +15,10 @@ admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
 warning_users = db["warning_users"]
 server_configs = db["server_configs"]
-pending_reaction_menus = db["pending_reaction_menus"]
 
+# ==========================================
+# HARDCODED CHANNELS
+# ==========================================
 LIVE_WARN_CHANNEL_ID = 1528330771562106965
 TEST_WARN_CHANNEL_ID = 1528431460535500940
 
@@ -39,6 +41,9 @@ class AdminActionConsumer(commands.Cog):
     def cog_unload(self):
         self.consume_actions.cancel()
 
+    # ==========================================
+    # 1. CONSUME DASHBOARD ACTIONS
+    # ==========================================
     @tasks.loop(seconds=5)
     async def consume_actions(self):
         action = admin_actions_collection.find_one_and_update(
@@ -110,20 +115,52 @@ class AdminActionConsumer(commands.Cog):
                 print(f"✅ [BOT] Sent announcement to {channel.name}")
 
             elif action['type'] == 'reaction_role':
-                # ==========================================================
-                # LET COGS.REACTION_ROLES HANDLE THIS!
-                # Just pass it to the dedicated cog.
-                # ==========================================================
-                reaction_cog = self.bot.get_cog("ReactionRoles")
-                if reaction_cog:
-                    # We just pass the data to the existing rr-setup logic
-                    print(f"✅ [BOT] Delegating to ReactionRoles cog...")
-                else:
-                    print(f"❌ [BOT] ReactionRoles cog not found!")
-            
+                channel_id = int(action.get('channel_id'))
+                channel = guild.get_channel(channel_id)
+                if not channel or not isinstance(channel, discord.TextChannel): raise Exception("Invalid text channel.")
+                
+                try: color = discord.Color.from_str(action.get('color', '#5865F2'))
+                except: color = discord.Color.blurple()
+                
+                title = action.get('title', 'Get Roles!')
+                description = action.get('description', 'React below to get roles.')
+                roles_list = action.get('roles', [])
+
+                embed = discord.Embed(title=title, description=description, color=color)
+                embed.set_footer(text="React to this message to receive roles!")
+
+                role_text = ""
+                for item in roles_list:
+                    role = guild.get_role(item['role_id'])
+                    role_mention = role.mention if role else "**Deleted Role**"
+                    role_text += f"{item['emoji']} {role_mention} — *{item['description']}*\n"
+                embed.add_field(name="Available Roles", value=role_text if role_text else "No roles added yet.", inline=False)
+
+                sent_msg = await channel.send(embed=embed)
+                for item in roles_list:
+                    try: await sent_msg.add_reaction(item['emoji'])
+                    except: pass
+                
+                reaction_roles_collection.insert_one({
+                    "guild_id": str(guild.id), "channel_id": str(channel.id),
+                    "message_id": str(sent_msg.id), "roles": roles_list
+                })
+                print(f"✅ [BOT] Created Reaction Role menu in {channel.name}")
+
             elif action['type'] == 'add_reaction_role':
-                # Let cogs.reaction_roles handle this too via its rr-add command
-                print(f"✅ [BOT] Delegating Add Role to ReactionRoles cog...")
+                message_id = action.get('message_id')
+                rr_data = reaction_roles_collection.find_one({"message_id": message_id})
+                if not rr_data: raise Exception("Reaction Role menu not found.")
+                new_role = {"emoji": action['emoji'], "role_id": action['role_id'], "description": action.get('description', '')}
+                reaction_roles_collection.update_one({"message_id": message_id}, {"$push": {"roles": new_role}})
+                try:
+                    channel = guild.get_channel(int(rr_data['channel_id']))
+                    if channel:
+                        msg = await channel.fetch_message(int(message_id))
+                        await msg.add_reaction(action['emoji'])
+                        print(f"✅ Added reaction {action['emoji']} to menu {message_id}")
+                except: pass
+                print(f"✅ Added role to reaction menu {message_id}")
 
             elif action['type'] == 'poll':
                 channel_id = int(action.get('channel_id', 0))
@@ -172,7 +209,34 @@ class AdminActionConsumer(commands.Cog):
         await self.bot.wait_until_ready()
         print("🚀 [BOT] Admin Action Consumer is starting...")
 
+    # ==========================================
+    # 2. AUTO-WARNING LISTENER (MONITORS ALL MESSAGES)
+    # ==========================================
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot: return
+        if not message.guild: return
+
+        lower_content = message.content.lower()
+        for word in BAD_WORDS:
+            if word in lower_content:
+                try: await message.delete()
+                except: pass
+
+                await self.handle_warning(
+                    guild=message.guild,
+                    member=message.author,
+                    reason=f"Auto-Mod: Used inappropriate language ({word})",
+                    moderator_name="Auto-Mod"
+                )
+                await message.channel.send(f"⚠️ {message.author.mention}, your message was deleted for containing inappropriate language. You have been automatically warned.")
+                break
+
+    # ==========================================
+    # 3. SHARED WARNING HANDLER
+    # ==========================================
     async def handle_warning(self, guild, member, reason, moderator_name):
+        # Save warning to MongoDB
         warning_users.update_one(
             {"guild_id": str(guild.id), "user_id": str(member.id)},
             {"$push": {"warnings": {
@@ -184,10 +248,12 @@ class AdminActionConsumer(commands.Cog):
         )
         print(f"✅ [BOT] Warning saved for {member.display_name}")
 
+        # Get total warning count
         user_data = warning_users.find_one({"guild_id": str(guild.id), "user_id": str(member.id)})
         warn_count = len(user_data["warnings"]) if user_data else 0
         print(f"⚖️ {member.display_name} now has {warn_count} warnings.")
 
+        # Check thresholds & apply punishment
         if warn_count >= 7:
             await member.ban(reason="7 warnings reached (5-day ban).")
             print(f"🔨 {member.display_name} was BANNED for 5 days (7 warnings).")
@@ -204,6 +270,7 @@ class AdminActionConsumer(commands.Cog):
             await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
             print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
 
+        # Send log
         await self.send_log(guild, member, reason, f"Total Warnings: {warn_count}", moderator_name, "⚠️")
 
     async def send_log(self, guild, member, title, description, moderator_name, emoji):
@@ -222,6 +289,49 @@ class AdminActionConsumer(commands.Cog):
             )
             embed.set_footer(text=f"Moderator: {moderator_name}")
             await warn_channel.send(embed=embed)
+
+    # ==========================================
+    # REACTION ROLE EVENT LISTENERS
+    # ==========================================
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        if payload.user_id == self.bot.user.id: return
+        rr_data = reaction_roles_collection.find_one({"message_id": str(payload.message_id)})
+        if not rr_data: return
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild: return
+        member = guild.get_member(payload.user_id)
+        if not member:
+            try: member = await guild.fetch_member(payload.user_id)
+            except: return
+        emoji_str = str(payload.emoji)
+        for role_data in rr_data["roles"]:
+            if role_data["emoji"] == emoji_str:
+                role = guild.get_role(role_data["role_id"])
+                if role and role not in member.roles:
+                    try: await member.add_roles(role, reason="Reaction Role")
+                    except: pass
+                break
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        if payload.user_id == self.bot.user.id: return
+        rr_data = reaction_roles_collection.find_one({"message_id": str(payload.message_id)})
+        if not rr_data: return
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild: return
+        member = guild.get_member(payload.user_id)
+        if not member:
+            try: member = await guild.fetch_member(payload.user_id)
+            except: return
+        emoji_str = str(payload.emoji)
+        for role_data in rr_data["roles"]:
+            if role_data["emoji"] == emoji_str:
+                role = guild.get_role(role_data["role_id"])
+                if role and role in member.roles:
+                    try: await member.remove_roles(role, reason="Reaction Role Removed")
+                    except: pass
+                break
 
 async def setup(bot):
     await bot.add_cog(AdminActionConsumer(bot))
