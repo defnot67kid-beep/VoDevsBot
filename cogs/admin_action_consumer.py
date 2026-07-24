@@ -15,6 +15,7 @@ admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
 warning_users = db["warning_users"]
 server_configs = db["server_configs"]
+pending_reaction_menus = db["pending_reaction_menus"]  # <-- NEW COLLECTION
 
 # ==========================================
 # HARDCODED CHANNELS
@@ -141,11 +142,15 @@ class AdminActionConsumer(commands.Cog):
                     try: await sent_msg.add_reaction(item['emoji'])
                     except: pass
                 
-                reaction_roles_collection.insert_one({
-                    "guild_id": str(guild.id), "channel_id": str(channel.id),
-                    "message_id": str(sent_msg.id), "roles": roles_list
+                # ==========================================================
+                # STORE IN PENDING COLLECTION SO DASHBOARD CAN READ IT
+                # ==========================================================
+                pending_reaction_menus.insert_one({
+                    "guild_id": str(guild.id),
+                    "message_id": str(sent_msg.id)
                 })
-                print(f"✅ [BOT] Created Reaction Role menu in {channel.name}")
+                
+                print(f"✅ [BOT] Created Reaction Role menu in {channel.name} (ID: {sent_msg.id})")
 
             elif action['type'] == 'add_reaction_role':
                 message_id = action.get('message_id')
@@ -236,7 +241,6 @@ class AdminActionConsumer(commands.Cog):
     # 3. SHARED WARNING HANDLER
     # ==========================================
     async def handle_warning(self, guild, member, reason, moderator_name):
-        # Save warning to MongoDB
         warning_users.update_one(
             {"guild_id": str(guild.id), "user_id": str(member.id)},
             {"$push": {"warnings": {
@@ -248,12 +252,10 @@ class AdminActionConsumer(commands.Cog):
         )
         print(f"✅ [BOT] Warning saved for {member.display_name}")
 
-        # Get total warning count
         user_data = warning_users.find_one({"guild_id": str(guild.id), "user_id": str(member.id)})
         warn_count = len(user_data["warnings"]) if user_data else 0
         print(f"⚖️ {member.display_name} now has {warn_count} warnings.")
 
-        # Check thresholds & apply punishment
         if warn_count >= 7:
             await member.ban(reason="7 warnings reached (5-day ban).")
             print(f"🔨 {member.display_name} was BANNED for 5 days (7 warnings).")
@@ -270,7 +272,6 @@ class AdminActionConsumer(commands.Cog):
             await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
             print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
 
-        # Send log
         await self.send_log(guild, member, reason, f"Total Warnings: {warn_count}", moderator_name, "⚠️")
 
     async def send_log(self, guild, member, title, description, moderator_name, emoji):
@@ -291,7 +292,7 @@ class AdminActionConsumer(commands.Cog):
             await warn_channel.send(embed=embed)
 
     # ==========================================
-    # REACTION ROLE EVENT LISTENERS
+    # 4. REACTION ROLE EVENT LISTENERS
     # ==========================================
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
