@@ -17,10 +17,10 @@ warning_users = db["warning_users"]
 server_configs = db["server_configs"]
 
 # ==========================================
-# HARDCODED CHANNELS (SEPARATED)
+# HARDCODED CHANNELS (SWAPPED AS REQUESTED)
 # ==========================================
-LOG_WARN_CHANNEL_ID = 1528330771562106965     # Where the embeds go
-MAIN_CHAT_CHANNEL_ID = 1528431460535500940    # Where the warning message to the user goes
+EMBED_LOG_CHANNEL_ID = 1528431460535500940    # WHERE ALL EMBEDS GO
+TEXT_WARN_CHANNEL_ID = 1528330771562106965     # WHERE PLAIN TEXT WARNINGS GO
 
 BAD_WORDS = ["nigger", "nigga", "faggot", "retard", "kike", "chink", "spic", "gook", "cunt", "whore", "slut", "rape", "pedophile"]
 
@@ -185,19 +185,6 @@ class AdminActionConsumer(commands.Cog):
                     if i < len(emojis): await sent_msg.add_reaction(emojis[i])
                 print(f"✅ [BOT] Created Poll in {channel.name}")
 
-            elif action['type'] == 'toggle_test_mode':
-                config = server_configs.find_one({"guild_id": str(guild.id)})
-                current_mode = config.get("test_mode", False) if config else False
-                new_mode = not current_mode
-                
-                server_configs.update_one(
-                    {"guild_id": str(guild.id)},
-                    {"$set": {"test_mode": new_mode}},
-                    upsert=True
-                )
-                status = "ENABLED" if new_mode else "DISABLED"
-                print(f"🧪 [BOT] Test Mode {status} for guild {guild.name}")
-            
             admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
         except Exception as e:
@@ -233,10 +220,10 @@ class AdminActionConsumer(commands.Cog):
                     moderator_name="Auto-Mod"
                 )
                 
-                # Send the warning message to the MAIN CHAT CHANNEL (1528431460535500940)
-                main_chat = message.guild.get_channel(MAIN_CHAT_CHANNEL_ID)
-                if main_chat and isinstance(main_chat, discord.TextChannel):
-                    await main_chat.send(f"⚠️ {message.author.mention}, your message was deleted for containing inappropriate language. You have been automatically warned.")
+                # Send the warning message to the TEXT CHANNEL (1528330771562106965)
+                text_chat = message.guild.get_channel(TEXT_WARN_CHANNEL_ID)
+                if text_chat and isinstance(text_chat, discord.TextChannel):
+                    await text_chat.send(f"⚠️ {message.author.mention}, your message was deleted for containing inappropriate language. You have been automatically warned.")
                 break
 
     # ==========================================
@@ -277,21 +264,16 @@ class AdminActionConsumer(commands.Cog):
             await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
             print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
 
-        # Send log to LOG channel (1528330771562106965)
+        # Send log to EMBED CHANNEL (1528431460535500940)
         await self.send_log_embed(guild, member, reason, f"Total Warnings: {warn_count}", moderator_name, "⚠️")
 
     async def send_log_embed(self, guild, member, title, description, moderator_name, emoji):
-        config = server_configs.find_one({"guild_id": str(guild.id)})
-        test_mode = config.get("test_mode", False) if config else False
-        
-        # Log Channel (If Test Mode is on, send to test channel. Else, send to the Live Log Channel)
-        target_channel_id = TEST_WARN_CHANNEL_ID if test_mode else LOG_WARN_CHANNEL_ID
-        warn_channel = guild.get_channel(target_channel_id)
+        # Always send embeds to the Embed Log Channel
+        warn_channel = guild.get_channel(EMBED_LOG_CHANNEL_ID)
         
         if warn_channel and isinstance(warn_channel, discord.TextChannel):
-            mode_label = "🧪 [TEST MODE]" if test_mode else ""
             embed = discord.Embed(
-                title=f"{mode_label} {emoji} {title}",
+                title=f"{emoji} {title}",
                 description=f"**User:** {member.mention}\n**Details:** {description}",
                 color=discord.Color.orange()
             )
