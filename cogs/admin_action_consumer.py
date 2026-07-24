@@ -17,10 +17,10 @@ warning_users = db["warning_users"]
 server_configs = db["server_configs"]
 
 # ==========================================
-# HARDCODED CHANNELS
+# HARDCODED CHANNELS (SEPARATED)
 # ==========================================
-LIVE_WARN_CHANNEL_ID = 1528330771562106965
-TEST_WARN_CHANNEL_ID = 1528431460535500940
+LOG_WARN_CHANNEL_ID = 1528330771562106965     # Where the embeds go
+MAIN_CHAT_CHANNEL_ID = 1528431460535500940    # Where the warning message to the user goes
 
 BAD_WORDS = ["nigger", "nigga", "faggot", "retard", "kike", "chink", "spic", "gook", "cunt", "whore", "slut", "rape", "pedophile"]
 
@@ -92,7 +92,7 @@ class AdminActionConsumer(commands.Cog):
                         await self.handle_warning(guild, member, reason, moderator_name)
                     elif action_type == 'clear_warnings':
                         warning_users.delete_one({"guild_id": str(guild.id), "user_id": str(member.id)})
-                        await self.send_log(guild, member, "All warnings cleared", "No warnings remain.", moderator_name, "✅")
+                        await self.send_log_embed(guild, member, "All warnings cleared", "No warnings remain.", moderator_name, "✅")
                     elif action_type == 'delete_single_warning':
                         warning_id = action.get('warning_id')
                         if warning_id:
@@ -100,7 +100,7 @@ class AdminActionConsumer(commands.Cog):
                                 {"guild_id": str(guild.id), "user_id": str(member.id)},
                                 {"$pull": {"warnings": {"_id": ObjectId(warning_id)}}}
                             )
-                            await self.send_log(guild, member, "Warning deleted", f"Deleted a specific warning.", moderator_name, "🗑️")
+                            await self.send_log_embed(guild, member, "Warning deleted", f"Deleted a specific warning.", moderator_name, "🗑️")
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
                 
@@ -223,13 +223,20 @@ class AdminActionConsumer(commands.Cog):
                 try: await message.delete()
                 except: pass
 
+                # Generate a safe reason (DO NOT REPEAT THE BAD WORD)
+                safe_reason = "Auto-Mod: Used inappropriate language"
+
                 await self.handle_warning(
                     guild=message.guild,
                     member=message.author,
-                    reason=f"Auto-Mod: Used inappropriate language ({word})",
+                    reason=safe_reason,
                     moderator_name="Auto-Mod"
                 )
-                await message.channel.send(f"⚠️ {message.author.mention}, your message was deleted for containing inappropriate language. You have been automatically warned.")
+                
+                # Send the warning message to the MAIN CHAT CHANNEL (1528431460535500940)
+                main_chat = message.guild.get_channel(MAIN_CHAT_CHANNEL_ID)
+                if main_chat and isinstance(main_chat, discord.TextChannel):
+                    await main_chat.send(f"⚠️ {message.author.mention}, your message was deleted for containing inappropriate language. You have been automatically warned.")
                 break
 
     # ==========================================
@@ -270,14 +277,15 @@ class AdminActionConsumer(commands.Cog):
             await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
             print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
 
-        # Send log
-        await self.send_log(guild, member, reason, f"Total Warnings: {warn_count}", moderator_name, "⚠️")
+        # Send log to LOG channel (1528330771562106965)
+        await self.send_log_embed(guild, member, reason, f"Total Warnings: {warn_count}", moderator_name, "⚠️")
 
-    async def send_log(self, guild, member, title, description, moderator_name, emoji):
+    async def send_log_embed(self, guild, member, title, description, moderator_name, emoji):
         config = server_configs.find_one({"guild_id": str(guild.id)})
         test_mode = config.get("test_mode", False) if config else False
         
-        target_channel_id = TEST_WARN_CHANNEL_ID if test_mode else LIVE_WARN_CHANNEL_ID
+        # Log Channel (If Test Mode is on, send to test channel. Else, send to the Live Log Channel)
+        target_channel_id = TEST_WARN_CHANNEL_ID if test_mode else LOG_WARN_CHANNEL_ID
         warn_channel = guild.get_channel(target_channel_id)
         
         if warn_channel and isinstance(warn_channel, discord.TextChannel):
