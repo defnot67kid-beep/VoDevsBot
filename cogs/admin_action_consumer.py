@@ -16,10 +16,11 @@ reaction_roles_collection = db["reaction_roles"]
 warning_users = db["warning_users"]
 
 # ==========================================
-# HARDCODED CHANNELS (UPDATED)
+# HARDCODED CHANNELS
 # ==========================================
-EMBED_LOG_CHANNEL_ID = 1526989768595083384    # <--- YOUR SERVER MESSAGE CHANNEL
+EMBED_LOG_CHANNEL_ID = 1528431460535500940    # WHERE ALL EMBEDS GO
 TEXT_WARN_CHANNEL_ID = 1528330771562106965     # WHERE PLAIN TEXT WARNINGS GO
+OWNER_ID = "1516568962966753291"               # IMMUNE USER
 
 BAD_WORDS = ["nigger", "nigga", "faggot", "retard", "kike", "chink", "spic", "gook", "cunt", "whore", "slut", "rape", "pedophile"]
 
@@ -61,6 +62,16 @@ class AdminActionConsumer(commands.Cog):
 
             if action['type'] == 'mod_action':
                 user_id = int(action.get('user_id'))
+                
+                # =======================================================
+                # 🛡️ OWNER IMMUNITY CHECK
+                # If the target user is the Owner, skip and mark as ignored.
+                # =======================================================
+                if str(user_id) == OWNER_ID:
+                    print(f"🛡️ [BOT] Action skipped: {action['action']} on Owner ({user_id})")
+                    admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed", "error": "Owner immunity triggered."}})
+                    return
+
                 member = guild.get_member(user_id)
                 if member is None:
                     try: member = await guild.fetch_member(user_id)
@@ -76,36 +87,22 @@ class AdminActionConsumer(commands.Cog):
                 try:
                     if action_type == 'kick': 
                         await member.kick(reason=reason)
-                        await self.send_action_embed(guild, member, "Kicked", reason, moderator_name, None)
                     elif action_type == 'ban': 
                         await member.ban(reason=reason)
-                        # Fetch warning count for the embed
-                        user_data = warning_users.find_one({"guild_id": str(guild.id), "user_id": str(member.id)})
-                        warn_count = len(user_data["warnings"]) if user_data else 0
-                        await self.send_action_embed(guild, member, "Banned", reason, moderator_name, warn_count)
                     elif action_type == 'unban':
                         try: await guild.unban(discord.Object(id=user_id), reason=reason)
                         except discord.NotFound: raise Exception("User is not banned.")
-                        await self.send_action_embed(guild, member, "Unbanned", reason, moderator_name, None)
                     elif action_type == 'timeout':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
-                        # Fetch warning count for the embed
-                        user_data = warning_users.find_one({"guild_id": str(guild.id), "user_id": str(member.id)})
-                        warn_count = len(user_data["warnings"]) if user_data else 0
-                        await self.send_action_embed(guild, member, "Timed Out", f"Duration: {duration}s", moderator_name, warn_count)
                     elif action_type == 'mute':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
-                        user_data = warning_users.find_one({"guild_id": str(guild.id), "user_id": str(member.id)})
-                        warn_count = len(user_data["warnings"]) if user_data else 0
-                        await self.send_action_embed(guild, member, "Muted", f"Duration: {duration}s", moderator_name, warn_count)
                     elif action_type == 'remove_timeout':
                         await member.timeout(None, reason=reason)
-                        await self.send_action_embed(guild, member, "Timeout Removed", reason, moderator_name, None)
                     elif action_type == 'warn':
                         await self.handle_warning(guild, member, reason, moderator_name)
                     elif action_type == 'clear_warnings':
                         warning_users.delete_one({"guild_id": str(guild.id), "user_id": str(member.id)})
-                        await self.send_action_embed(guild, member, "Warnings Cleared", "No warnings remain.", moderator_name, None)
+                        await self.send_log_embed(guild, member, "All warnings cleared", "No warnings remain.", moderator_name, "✅")
                     elif action_type == 'delete_single_warning':
                         warning_id = action.get('warning_id')
                         if warning_id:
@@ -113,11 +110,12 @@ class AdminActionConsumer(commands.Cog):
                                 {"guild_id": str(guild.id), "user_id": str(member.id)},
                                 {"$pull": {"warnings": {"_id": ObjectId(warning_id)}}}
                             )
-                            await self.send_action_embed(guild, member, "Warning Deleted", f"Deleted a specific warning.", moderator_name, None)
+                            await self.send_log_embed(guild, member, "Warning deleted", f"Deleted a specific warning.", moderator_name, "🗑️")
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
                 
-                print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
+                if action_type not in ['warn', 'clear_warnings', 'delete_single_warning']:
+                    print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
 
             elif action['type'] == 'announcement':
                 channel_id = int(action.get('channel_id', 0))
@@ -215,6 +213,10 @@ class AdminActionConsumer(commands.Cog):
     async def on_message(self, message: discord.Message):
         if message.author.bot: return
         if not message.guild: return
+        
+        # 🛡️ Skip owner from auto-moderation
+        if str(message.author.id) == OWNER_ID:
+            return
 
         lower_content = message.content.lower()
         for word in BAD_WORDS:
@@ -259,51 +261,38 @@ class AdminActionConsumer(commands.Cog):
         warn_count = len(user_data["warnings"]) if user_data else 0
         print(f"⚖️ {member.display_name} now has {warn_count} warnings.")
 
-        # Send a Warning Embed to the Server Message Channel (1526989768595083384)
-        await self.send_action_embed(guild, member, "Warned", reason, moderator_name, warn_count)
-
         # Check thresholds & apply punishment
         if warn_count >= 7:
             await member.ban(reason="7 warnings reached (5-day ban).")
-            await self.send_action_embed(guild, member, "Banned", "7 warnings reached (5-day ban).", "Auto-System", warn_count)
+            print(f"🔨 {member.display_name} was BANNED for 5 days (7 warnings).")
         elif warn_count == 6:
             await member.ban(reason="6 warnings reached (5-day ban).")
-            await self.send_action_embed(guild, member, "Banned", "6 warnings reached (5-day ban).", "Auto-System", warn_count)
+            print(f"🔨 {member.display_name} was BANNED for 5 days (6 warnings).")
         elif warn_count == 5:
             await member.timeout(discord.utils.utcnow() + timedelta(days=7), reason="5 warnings reached (7-day mute).")
-            await self.send_action_embed(guild, member, "Timed Out", "5 warnings reached (7-day mute).", "Auto-System", warn_count)
+            print(f"🔇 {member.display_name} was MUTED for 7 days (5 warnings).")
         elif warn_count == 4:
             await member.timeout(discord.utils.utcnow() + timedelta(days=1), reason="4 warnings reached (1-day mute).")
-            await self.send_action_embed(guild, member, "Timed Out", "4 warnings reached (1-day mute).", "Auto-System", warn_count)
+            print(f"🔇 {member.display_name} was MUTED for 1 day (4 warnings).")
         elif warn_count == 3:
             await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
-            await self.send_action_embed(guild, member, "Timed Out", "3 warnings reached (1-hour mute).", "Auto-System", warn_count)
+            print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
 
-    # ==========================================
-    # 4. UNIFIED ACTION EMBED SENDER
-    # ==========================================
-    async def send_action_embed(self, guild, member, action_title, details, moderator_name, warning_count):
-        """
-        Sends a clean embed to 1526989768595083384.
-        If warning_count is provided, it appends the threshold info.
-        """
+        # Send log to EMBED CHANNEL (1528431460535500940)
+        await self.send_log_embed(guild, member, reason, f"Total Warnings: {warn_count}", moderator_name, "⚠️")
+
+    async def send_log_embed(self, guild, member, title, description, moderator_name, emoji):
+        # Always send embeds to the Embed Log Channel
         warn_channel = guild.get_channel(EMBED_LOG_CHANNEL_ID)
-        if not warn_channel or not isinstance(warn_channel, discord.TextChannel):
-            return
-
-        # Build the description
-        description = f"**User:** {member.mention}\n**Details:** {details}"
-        if warning_count is not None:
-            description += f"\n**Warning Threshold:** {warning_count} warnings"
-
-        embed = discord.Embed(
-            title=f"🛡️ User has been {action_title}",
-            description=description,
-            color=discord.Color.orange()
-        )
-        embed.set_footer(text=f"Moderator: {moderator_name}")
-
-        await warn_channel.send(embed=embed)
+        
+        if warn_channel and isinstance(warn_channel, discord.TextChannel):
+            embed = discord.Embed(
+                title=f"{emoji} {title}",
+                description=f"**User:** {member.mention}\n**Details:** {description}",
+                color=discord.Color.orange()
+            )
+            embed.set_footer(text=f"Moderator: {moderator_name}")
+            await warn_channel.send(embed=embed)
 
     # ==========================================
     # REACTION ROLE EVENT LISTENERS
