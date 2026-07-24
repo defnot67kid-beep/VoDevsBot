@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks  # <--- FIX: Added 'tasks' here!
 import pymongo
 import os
 
