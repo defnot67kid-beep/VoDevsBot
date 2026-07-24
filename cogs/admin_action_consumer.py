@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import pymongo
 import os
 from datetime import timedelta, datetime
+from bson.objectid import ObjectId
 
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
@@ -85,12 +86,25 @@ class AdminActionConsumer(commands.Cog):
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'mute':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
+                    elif action_type == 'remove_timeout':
+                        await member.timeout(None, reason=reason)
                     elif action_type == 'warn':
                         await self.handle_warning(guild, member, reason, moderator_name)
+                    elif action_type == 'clear_warnings':
+                        warning_users.delete_one({"guild_id": str(guild.id), "user_id": str(member.id)})
+                        await self.send_log(guild, member, "All warnings cleared", "No warnings remain.", moderator_name, "✅")
+                    elif action_type == 'delete_single_warning':
+                        warning_id = action.get('warning_id')
+                        if warning_id:
+                            warning_users.update_one(
+                                {"guild_id": str(guild.id), "user_id": str(member.id)},
+                                {"$pull": {"warnings": {"_id": ObjectId(warning_id)}}}
+                            )
+                            await self.send_log(guild, member, "Warning deleted", f"Deleted a specific warning.", moderator_name, "🗑️")
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
                 
-                if action_type != 'warn':
+                if action_type not in ['warn', 'clear_warnings', 'delete_single_warning']:
                     print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
 
             elif action['type'] == 'announcement':
@@ -172,7 +186,6 @@ class AdminActionConsumer(commands.Cog):
                 print(f"✅ [BOT] Created Poll in {channel.name}")
 
             elif action['type'] == 'toggle_test_mode':
-                # Toggle test_mode in server_configs
                 config = server_configs.find_one({"guild_id": str(guild.id)})
                 current_mode = config.get("test_mode", False) if config else False
                 new_mode = not current_mode
@@ -257,7 +270,10 @@ class AdminActionConsumer(commands.Cog):
             await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
             print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
 
-        # Send log to channel (Live or Test based on config)
+        # Send log
+        await self.send_log(guild, member, reason, f"Total Warnings: {warn_count}", moderator_name, "⚠️")
+
+    async def send_log(self, guild, member, title, description, moderator_name, emoji):
         config = server_configs.find_one({"guild_id": str(guild.id)})
         test_mode = config.get("test_mode", False) if config else False
         
@@ -267,8 +283,8 @@ class AdminActionConsumer(commands.Cog):
         if warn_channel and isinstance(warn_channel, discord.TextChannel):
             mode_label = "🧪 [TEST MODE]" if test_mode else ""
             embed = discord.Embed(
-                title=f"{mode_label} ⚠️ User Warned",
-                description=f"**User:** {member.mention}\n**Reason:** {reason}\n**Total Warnings:** {warn_count}",
+                title=f"{mode_label} {emoji} {title}",
+                description=f"**User:** {member.mention}\n**Details:** {description}",
                 color=discord.Color.orange()
             )
             embed.set_footer(text=f"Moderator: {moderator_name}")
