@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands, tasks  # <--- FIX: Added 'tasks' here!
+from discord.ext import commands, tasks
 import pymongo
 import os
 
@@ -12,9 +12,9 @@ if not MONGO_URI:
 
 client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
-rr_collection = db["reaction_roles"]
-admin_actions_collection = db["admin_actions"]  # Added to check queue
-pending_reaction_menus = db["pending_reaction_menus"] # Added for Dashboard feedback
+rr_collection = db["reaction_roles"]              # <-- Stores Emojis/Roles for Listeners
+rr_menu_ids_collection = db["reaction_menu_ids"]    # <-- NEW: Stores Message IDs for Dashboard
+admin_actions_collection = db["admin_actions"]
 
 # ============================================
 # REACTION ROLE COG
@@ -72,7 +72,7 @@ class ReactionRoles(commands.Cog):
 
             msg = await channel.send(embed=embed)
 
-            # Save to MongoDB
+            # 1. SAVE TO MAIN REACTION_ROLES COLLECTION (FOR LISTENERS)
             rr_collection.insert_one({
                 "message_id": str(msg.id),
                 "channel_id": channel.id,
@@ -83,8 +83,8 @@ class ReactionRoles(commands.Cog):
                 "roles": {} 
             })
 
-            # Notify Dashboard via the pending collection
-            pending_reaction_menus.insert_one({
+            # 2. SAVE TO NEW REACTION_MENU_IDS COLLECTION (FOR DASHBOARD)
+            rr_menu_ids_collection.insert_one({
                 "guild_id": str(guild.id),
                 "message_id": str(msg.id)
             })
@@ -114,7 +114,7 @@ class ReactionRoles(commands.Cog):
 
         msg = await ctx.send(embed=embed)
         
-        # Save to MongoDB
+        # 1. SAVE TO MAIN REACTION_ROLES COLLECTION
         rr_collection.insert_one({
             "message_id": str(msg.id),
             "channel_id": ctx.channel.id,
@@ -123,6 +123,12 @@ class ReactionRoles(commands.Cog):
             "description": description,
             "color": color.value,
             "roles": {} 
+        })
+
+        # 2. SAVE TO NEW REACTION_MENU_IDS COLLECTION
+        rr_menu_ids_collection.insert_one({
+            "guild_id": str(ctx.guild.id),
+            "message_id": str(msg.id)
         })
 
         await ctx.send(f"✅ Reaction Role Menu created! ID: `{msg.id}`\nUse `{ctx.prefix}rr-add {msg.id} :emoji: @Role <description>` to add roles.", delete_after=15)
