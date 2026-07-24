@@ -219,7 +219,7 @@ async def load_cogs():
     try:
         # Core cogs
         await bot.load_extension("cogs.admin_core")
-        await bot.load_extension("cogs.moderation_elite") # <-- REMOVED, WARNINGS ARE NOW IN ADMIN_ACTION_CONSUMER
+        # REMOVED: await bot.load_extension("cogs.moderation_elite")
         await bot.load_extension("cogs.utility_mega")
         
         # Fun & Games
