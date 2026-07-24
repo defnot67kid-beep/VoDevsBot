@@ -13,7 +13,7 @@ db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
 server_configs_collection = db["server_configs"]
-warnings_collection = db["warnings"]  # NEW COLLECTION FOR WARNINGS
+warnings_collection = db["warnings"]  # <--- Warnings go here now
 
 def parse_duration(text):
     text = text.lower().strip()
@@ -61,7 +61,7 @@ class AdminActionConsumer(commands.Cog):
                         return
 
                 action_type = action.get('action')
-                reason = action.get('reason', 'No reason provided.')
+                reason = action.get('reason', 'No reason provided.') # <--- This is the string
                 duration = int(action.get('duration', 60))
 
                 try:
@@ -85,7 +85,7 @@ class AdminActionConsumer(commands.Cog):
                             "moderator": "Dashboard",
                             "timestamp": datetime.utcnow().isoformat()
                         })
-                        print(f"✅ [BOT] Executed WARN on {member.display_name}")
+                        print(f"✅ [BOT] Executed WARN on {member.display_name} for: {reason}")
                         
                         # Send log to Warn Channel if configured
                         config = server_configs_collection.find_one({"guild_id": str(guild.id)})
