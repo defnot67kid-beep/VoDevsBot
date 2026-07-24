@@ -12,8 +12,12 @@ client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
-server_configs_collection = db["server_configs"]
-warning_users = db["warning_users"]  # <--- YOUR WARNINGS COLLECTION
+warning_users = db["warning_users"]  # <--- ALL WARNINGS GO HERE
+
+# ==========================================
+# HARDCODED WARNING CHANNEL
+# ==========================================
+WARN_CHANNEL_ID = 1528330771562106965
 
 def parse_duration(text):
     text = text.lower().strip()
@@ -106,7 +110,7 @@ class AdminActionConsumer(commands.Cog):
                             await member.ban(reason="7 warnings reached (5-day ban).")
                             print(f"🔨 {member.display_name} was BANNED for 5 days (7 warnings).")
                         elif warn_count == 6:
-                            # 6 warnings = 5-day ban (7-day ban is redundant with 5-day ban, but let's follow your rule as 5-day)
+                            # 6 warnings = 5-day ban
                             await member.ban(reason="6 warnings reached (5-day ban).")
                             print(f"🔨 {member.display_name} was BANNED for 5 days (6 warnings).")
                         elif warn_count == 5:
@@ -122,19 +126,18 @@ class AdminActionConsumer(commands.Cog):
                             await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
                             print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
 
-                        # Send log to Warn Channel if configured
-                        config = server_configs_collection.find_one({"guild_id": str(guild.id)})
-                        warn_channel_id = config.get("warn_channel_id") if config else None
-                        if warn_channel_id:
-                            warn_channel = guild.get_channel(int(warn_channel_id))
-                            if warn_channel and isinstance(warn_channel, discord.TextChannel):
-                                embed = discord.Embed(
-                                    title="⚠️ User Warned",
-                                    description=f"**User:** {member.mention}\n**Reason:** {reason}\n**Total Warnings:** {warn_count}",
-                                    color=discord.Color.orange()
-                                )
-                                embed.set_footer(text=f"Moderator: Dashboard")
-                                await warn_channel.send(embed=embed)
+                        # ==========================================
+                        # 4. SEND LOG TO HARDCODED CHANNEL
+                        # ==========================================
+                        warn_channel = guild.get_channel(WARN_CHANNEL_ID)
+                        if warn_channel and isinstance(warn_channel, discord.TextChannel):
+                            embed = discord.Embed(
+                                title="⚠️ User Warned",
+                                description=f"**User:** {member.mention}\n**Reason:** {reason}\n**Total Warnings:** {warn_count}",
+                                color=discord.Color.orange()
+                            )
+                            embed.set_footer(text=f"Moderator: Dashboard")
+                            await warn_channel.send(embed=embed)
 
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
