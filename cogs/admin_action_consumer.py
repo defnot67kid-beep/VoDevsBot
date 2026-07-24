@@ -13,11 +13,14 @@ db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
 warning_users = db["warning_users"]
+server_configs = db["server_configs"]
 
 # ==========================================
-# HARDCODED WARNING CHANNEL & BAD WORDS LIST
+# HARDCODED CHANNELS
 # ==========================================
-WARN_CHANNEL_ID = 1528330771562106965
+LIVE_WARN_CHANNEL_ID = 1528330771562106965
+TEST_WARN_CHANNEL_ID = 1528431460535500940
+
 BAD_WORDS = ["nigger", "nigga", "faggot", "retard", "kike", "chink", "spic", "gook", "cunt", "whore", "slut", "rape", "pedophile"]
 
 def parse_duration(text):
@@ -83,9 +86,6 @@ class AdminActionConsumer(commands.Cog):
                     elif action_type == 'mute':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'warn':
-                        # ==========================================
-                        # MANUAL WARNING FROM DASHBOARD
-                        # ==========================================
                         await self.handle_warning(guild, member, reason, moderator_name)
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
@@ -171,6 +171,20 @@ class AdminActionConsumer(commands.Cog):
                     if i < len(emojis): await sent_msg.add_reaction(emojis[i])
                 print(f"✅ [BOT] Created Poll in {channel.name}")
 
+            elif action['type'] == 'toggle_test_mode':
+                # Toggle test_mode in server_configs
+                config = server_configs.find_one({"guild_id": str(guild.id)})
+                current_mode = config.get("test_mode", False) if config else False
+                new_mode = not current_mode
+                
+                server_configs.update_one(
+                    {"guild_id": str(guild.id)},
+                    {"$set": {"test_mode": new_mode}},
+                    upsert=True
+                )
+                status = "ENABLED" if new_mode else "DISABLED"
+                print(f"🧪 [BOT] Test Mode {status} for guild {guild.name}")
+            
             admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
         except Exception as e:
@@ -190,25 +204,18 @@ class AdminActionConsumer(commands.Cog):
         if message.author.bot: return
         if not message.guild: return
 
-        # Check for bad words (case insensitive)
         lower_content = message.content.lower()
         for word in BAD_WORDS:
             if word in lower_content:
-                # Delete the offensive message
-                try:
-                    await message.delete()
-                except:
-                    pass
+                try: await message.delete()
+                except: pass
 
-                # Auto-warn the user
                 await self.handle_warning(
                     guild=message.guild,
                     member=message.author,
                     reason=f"Auto-Mod: Used inappropriate language ({word})",
                     moderator_name="Auto-Mod"
                 )
-                
-                # Send a follow-up message to the channel
                 await message.channel.send(f"⚠️ {message.author.mention}, your message was deleted for containing inappropriate language. You have been automatically warned.")
                 break
 
@@ -250,11 +257,17 @@ class AdminActionConsumer(commands.Cog):
             await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
             print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
 
-        # Send log to hardcoded channel
-        warn_channel = guild.get_channel(WARN_CHANNEL_ID)
+        # Send log to channel (Live or Test based on config)
+        config = server_configs.find_one({"guild_id": str(guild.id)})
+        test_mode = config.get("test_mode", False) if config else False
+        
+        target_channel_id = TEST_WARN_CHANNEL_ID if test_mode else LIVE_WARN_CHANNEL_ID
+        warn_channel = guild.get_channel(target_channel_id)
+        
         if warn_channel and isinstance(warn_channel, discord.TextChannel):
+            mode_label = "🧪 [TEST MODE]" if test_mode else ""
             embed = discord.Embed(
-                title="⚠️ User Warned",
+                title=f"{mode_label} ⚠️ User Warned",
                 description=f"**User:** {member.mention}\n**Reason:** {reason}\n**Total Warnings:** {warn_count}",
                 color=discord.Color.orange()
             )
