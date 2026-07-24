@@ -219,7 +219,7 @@ async def load_cogs():
     try:
         # Core cogs
         await bot.load_extension("cogs.admin_core")
-        await bot.load_extension("cogs.moderation_elite")
+        await bot.load_extension("cogs.moderation_elite") # <-- REMOVED, WARNINGS ARE NOW IN ADMIN_ACTION_CONSUMER
         await bot.load_extension("cogs.utility_mega")
         
         # Fun & Games
@@ -254,8 +254,8 @@ async def load_cogs():
         # ==============================================
         await bot.load_extension("cogs.admingiver")      # <--- ADMIN/OWNER LINK GENERATOR
         await bot.load_extension("cogs.server_cache")    # <--- CACHES ROLES/CHANNELS
-        await bot.load_extension("cogs.admin_action_consumer") # <--- NEW CONSUMER
-        await bot.load_extension("cogs.user_cache")      # <--- REPLACED dashboardcontroller
+        await bot.load_extension("cogs.user_cache")      # <--- CACHES USERS
+        await bot.load_extension("cogs.admin_action_consumer") # <--- CONSUMES QUEUE + WARNINGS
         
         # Optional cogs (can be disabled if needed)
         try:
