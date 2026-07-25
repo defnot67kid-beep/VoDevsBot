@@ -169,10 +169,13 @@ class WelcomeSystem(commands.Cog):
         return discord.File(fp=img_io, filename="welcome.png")
 
     # ============================================
-    # BUILD WARNING IMAGE CARD
+    # BUILD MODERATION ACTION CARD (UNIFIED)
     # ============================================
-    async def build_warning_card(self, guild: discord.Guild, member: discord.Member, reason: str, moderator_name: str, warn_count: int):
-        """Generates a custom image card for warnings."""
+    async def build_action_card(self, guild: discord.Guild, member: discord.Member, action_type: str, reason: str, moderator_name: str, warn_count: int = 0):
+        """
+        Generates a unified card for ALL Moderation Actions.
+        Uses the same style as the Welcome Card, but with dynamic text.
+        """
         config = self.get_welcome_config(guild.id)
         
         canvas_width = 800
@@ -192,20 +195,24 @@ class WelcomeSystem(commands.Cog):
         img = bg_img.copy()
         draw = ImageDraw.Draw(img)
 
+        # Colors (Red text for actions, Light blue for names)
         circle_color = self.hex_to_rgb(config.get("circle_color", "#d1a3ff"))
         name_color = self.hex_to_rgb(config.get("user_name_color", "#a1b0d6"))
-        text_color = self.hex_to_rgb("#ff5555") # Red color for warnings
+        action_text_color = self.hex_to_rgb("#ff5555") # Red for the action status
+        reason_text_color = self.hex_to_rgb("#ffaaaa") # Lighter red for reason
 
         # -------------------------------------------------------------
         # LOAD FONT FROM THE SAME FOLDER AS main.py
         # -------------------------------------------------------------
         font_large = ImageFont.load_default()
         font_medium = ImageFont.load_default()
+        font_small = ImageFont.load_default()
         font_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
         if os.path.exists(font_path):
             try:
                 font_large = ImageFont.truetype(font_path, 46)
-                font_medium = ImageFont.truetype(font_path, 36)
+                font_medium = ImageFont.truetype(font_path, 30)
+                font_small = ImageFont.truetype(font_path, 22)
             except:
                 pass
 
@@ -229,20 +236,36 @@ class WelcomeSystem(commands.Cog):
         except Exception as e:
             print(f"❌ Error fetching avatar: {e}")
 
-        # Draw Username
+        # 1. Draw Username (Example: "Vorthez")
         user_name = member.display_name
-        username_text = user_name
-        draw.text((canvas_width / 2, circle_y + avatar_size + 20), username_text, fill=name_color, font=font_large, anchor="mm")
+        draw.text((canvas_width / 2, circle_y + avatar_size + 20), user_name, fill=name_color, font=font_large, anchor="mm")
 
-        # Draw Warning Reason
-        warning_text = f"⚠️ {reason}"
-        draw.text((canvas_width / 2, circle_y + avatar_size + 80), warning_text, fill=text_color, font=font_medium, anchor="mm")
+        # 2. Draw Action Type (Example: "has been WARNED")
+        action_text = f"has been {action_type.upper()}"
+        draw.text((canvas_width / 2, circle_y + avatar_size + 75), action_text, fill=action_text_color, font=font_medium, anchor="mm")
+
+        # 3. Draw the Reason (Example: "Reason: test")
+        if reason:
+            # Truncate reason if it's too long (max 60 chars)
+            display_reason = reason
+            if len(display_reason) > 60: display_reason = display_reason[:57] + "..."
+            
+            reason_text = f"Reason: {display_reason}"
+            draw.text((canvas_width / 2, circle_y + avatar_size + 110), reason_text, fill=reason_text_color, font=font_small, anchor="mm")
+
+        # 4. If it's a WARNING, show the warning count
+        if action_type.lower() == "warn" and warn_count > 0:
+            count_text = f"Total Warnings: {warn_count}"
+            draw.text((canvas_width / 2, circle_y + avatar_size + 140), count_text, fill=reason_text_color, font=font_small, anchor="mm")
 
         img_io = io.BytesIO()
         img.save(img_io, 'PNG')
         img_io.seek(0)
-        return discord.File(fp=img_io, filename="warning.png")
+        return discord.File(fp=img_io, filename="action.png")
 
+    # ============================================
+    # HELPER: CONVERT HEX TO RGB
+    # ============================================
     def hex_to_rgb(self, hex_code: str):
         """Convert hex color to RGB tuple."""
         hex_code = hex_code.lstrip('#')
@@ -401,8 +424,5 @@ class WelcomeSystem(commands.Cog):
                 except Exception as e:
                     print(f"❌ Failed to send welcome card: {e}")
 
-# ==========================================
-# SETUP
-# ==========================================
 async def setup(bot):
     await bot.add_cog(WelcomeSystem(bot))
