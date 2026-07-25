@@ -212,7 +212,6 @@ class AdminActionConsumer(commands.Cog):
                 print(f"✅ [BOT] Created Poll in {channel.name}")
 
             elif action['type'] == 'save_welcome_config':
-                # Import dynamically to avoid circular import issues
                 from cogs.welcome import WelcomeSystem
                 welcome_cog = self.bot.get_cog("WelcomeSystem")
                 if welcome_cog:
@@ -226,6 +225,25 @@ class AdminActionConsumer(commands.Cog):
                     welcome_cog.welcome_settings[guild_id_str]["welcome_text_color"] = action.get('welcome_msg_color', "#a1b0d6")
                     welcome_cog.save_data()
                     print(f"✅ [BOT] Welcome config saved for guild {guild.name}")
+
+            elif action['type'] == 'update_welcome_asset':
+                from cogs.welcome import WelcomeSystem
+                welcome_cog = self.bot.get_cog("WelcomeSystem")
+                if welcome_cog:
+                    guild_id_str = str(guild.id)
+                    if guild_id_str not in welcome_cog.welcome_settings:
+                        welcome_cog.welcome_settings[guild_id_str] = {}
+                    
+                    asset_type = action.get('asset_type')
+                    filename = action.get('filename')
+                    
+                    if asset_type == 'background':
+                        welcome_cog.welcome_settings[guild_id_str]["welcome_background"] = filename
+                    elif asset_type == 'font':
+                        welcome_cog.welcome_settings[guild_id_str]["custom_font"] = filename
+                    
+                    welcome_cog.save_data()
+                    print(f"✅ [BOT] Updated welcome {asset_type} to {filename}")
 
             admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
