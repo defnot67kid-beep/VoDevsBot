@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands, tasks
 import pymongo
-import gridfs  # <--- ADD THIS
 import os
 from datetime import timedelta, datetime
 from bson.objectid import ObjectId
@@ -12,8 +11,6 @@ if not MONGO_URI:
 
 client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
-fs = gridfs.GridFS(db)  # <--- ADD THIS
-
 admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
 warning_users = db["warning_users"]
@@ -22,12 +19,13 @@ server_configs = db["server_configs"]
 # ==========================================
 # HARDCODED CHANNELS & IMMUNITY CONFIG
 # ==========================================
-EMBED_LOG_CHANNEL_ID = 1528431460535500940    # WHERE ALL EMBEDS GO
-TEXT_WARN_CHANNEL_ID = 1528330771562106965     # WHERE PLAIN TEXT WARNINGS GO
+WARNING_IMAGE_CHANNEL_ID = 1526989768595083384  # WHERE WARNING IMAGES GO
+EMBED_LOG_CHANNEL_ID = 1528431460535500940      # FALLBACK FOR EMBEDS
+TEXT_WARN_CHANNEL_ID = 1528330771562106965      # PLAIN TEXT WARNINGS
 
-OWNER_ID = "1516568962966753291"               # ABSOLUTE IMMUNITY
-ADMIN_ROLE_ID = 1527642221942276148            # ADMIN ROLE (IMMUNE FROM MODS)
-MOD_ROLE_ID = 1526977512654245928              # MOD ROLE (TRIGGERS ACTIONS)
+OWNER_ID = "1516568962966753291"                # ABSOLUTE IMMUNITY
+ADMIN_ROLE_ID = 1527642221942276148             # ADMIN ROLE (IMMUNE FROM MODS)
+MOD_ROLE_ID = 1526977512654245928               # MOD ROLE (TRIGGERS ACTIONS)
 
 BAD_WORDS = ["nigger", "nigga", "faggot", "retard", "kike", "chink", "spic", "gook", "cunt", "whore", "slut", "rape", "pedophile"]
 
@@ -90,11 +88,9 @@ class AdminActionConsumer(commands.Cog):
 
                 # 2. Role Hierarchy Immunity
                 if ADMIN_ROLE_ID in [r.id for r in member.roles]:
-                    # If the dashboard user is the Owner, allowed
                     if moderator_name == "Dashboard" or moderator_name == "Auto-Mod":
                         pass
                     else:
-                        # Block Mods from acting on Admins
                         print(f"🛡️ [BOT] Action blocked: Mod ({moderator_name}) tried to act on Admin ({member.display_name}).")
                         admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed", "error": "Admin immune from Mod actions."}})
                         return
@@ -229,24 +225,6 @@ class AdminActionConsumer(commands.Cog):
                     welcome_cog.save_data()
                     print(f"✅ [BOT] Welcome config saved for guild {guild.name}")
 
-            elif action['type'] == 'update_welcome_asset':
-                from cogs.welcome import WelcomeSystem
-                welcome_cog = self.bot.get_cog("WelcomeSystem")
-                if welcome_cog:
-                    guild_id_str = str(guild.id)
-                    if guild_id_str not in welcome_cog.welcome_settings:
-                        welcome_cog.welcome_settings[guild_id_str] = {}
-                    
-                    asset_type = action.get('asset_type')
-                    
-                    if asset_type == 'background':
-                        welcome_cog.welcome_settings[guild_id_str]["welcome_background"] = action.get('file_id')
-                    elif asset_type == 'font':
-                        welcome_cog.welcome_settings[guild_id_str]["custom_font"] = action.get('file_id')
-                    
-                    welcome_cog.save_data()
-                    print(f"✅ [BOT] Updated welcome {asset_type} file ID in config")
-
             admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
         except Exception as e:
@@ -330,7 +308,19 @@ class AdminActionConsumer(commands.Cog):
             await member.timeout(discord.utils.utcnow() + timedelta(hours=1), reason="3 warnings reached (1-hour mute).")
             print(f"🔇 {member.display_name} was MUTED for 1 hour (3 warnings).")
 
-        # Send log to EMBED CHANNEL (1528431460535500940)
+        # Send WARNING IMAGE to specified channel (1526989768595083384)
+        from cogs.welcome import WelcomeSystem
+        welcome_cog = self.bot.get_cog("WelcomeSystem")
+        if welcome_cog:
+            try:
+                warn_channel = guild.get_channel(WARNING_IMAGE_CHANNEL_ID)
+                if warn_channel and isinstance(warn_channel, discord.TextChannel):
+                    file = await welcome_cog.build_warning_card(guild, member, reason, moderator_name, warn_count)
+                    await warn_channel.send(file=file)
+            except Exception as e:
+                print(f"❌ Failed to send warning image card: {e}")
+
+        # Fallback: send embed to original log channel
         await self.send_log_embed(guild, member, reason, f"Total Warnings: {warn_count}", moderator_name, "⚠️")
 
     async def send_log_embed(self, guild, member, title, description, moderator_name, emoji):
