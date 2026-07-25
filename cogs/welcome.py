@@ -49,7 +49,8 @@ class WelcomeSystem(commands.Cog):
                 "enabled": False,
                 "channel_id": None,
                 "auto_roles": [],
-                "welcome_image_url": None,
+                "welcome_background": None,
+                "custom_font": None,
                 "welcome_text": "Welcome to VoDevs!",
                 "welcome_text_color": "#a1b0d6",
                 "user_name_color": "#a1b0d6",
@@ -103,17 +104,46 @@ class WelcomeSystem(commands.Cog):
         """Generates a custom image card similar to the screenshot."""
         config = self.get_welcome_config(member.guild.id)
         
-        # Define canvas size and colors
+        # Define canvas size
         canvas_width = 800
         canvas_height = 350
-        bg_color = (54, 57, 63) # Discord dark grey
+        
+        # Determine the Background
+        bg_filename = config.get("welcome_background", None)
+        if bg_filename and os.path.exists(os.path.join("welcome_assets", bg_filename)):
+            bg_path = os.path.join("welcome_assets", bg_filename)
+            bg_img = Image.open(bg_path).convert("RGB").resize((canvas_width, canvas_height), Image.LANCZOS)
+        else:
+            # Default dark grey background
+            bg_img = Image.new('RGB', (canvas_width, canvas_height), color=(54, 57, 63))
+        
+        img = bg_img.copy()
+        draw = ImageDraw.Draw(img)
+
+        # Colors from config
         circle_color = self.hex_to_rgb(config.get("circle_color", "#d1a3ff"))
         name_color = self.hex_to_rgb(config.get("user_name_color", "#a1b0d6"))
         text_color = self.hex_to_rgb(config.get("welcome_text_color", "#a1b0d6"))
 
-        # Create background image
-        img = Image.new('RGB', (canvas_width, canvas_height), color=bg_color)
-        draw = ImageDraw.Draw(img)
+        # Determine the Fonts
+        font_filename = config.get("custom_font", None)
+        font_large = None
+        font_medium = None
+        
+        # Try loading custom font first, then fallback to Inter.ttf, then default
+        try:
+            if font_filename and os.path.exists(os.path.join("welcome_assets", font_filename)):
+                font_path = os.path.join("welcome_assets", font_filename)
+                font_large = ImageFont.truetype(font_path, 46)
+                font_medium = ImageFont.truetype(font_path, 36)
+            else:
+                # Fallback to "Inter-SemiBold.ttf" if available
+                font_large = ImageFont.truetype("Inter-SemiBold.ttf", 46)
+                font_medium = ImageFont.truetype("Inter-SemiBold.ttf", 36)
+        except:
+            # If both fail, use default
+            font_large = ImageFont.load_default()
+            font_medium = ImageFont.load_default()
 
         # Draw the avatar circle border
         avatar_size = 180
@@ -140,14 +170,6 @@ class WelcomeSystem(commands.Cog):
                         img.paste(avatar_img, (circle_x, circle_y), avatar_img)
         except Exception as e:
             print(f"❌ Error fetching avatar: {e}")
-
-        # Load font
-        try:
-            font_large = ImageFont.truetype("Inter-SemiBold.ttf", 46)
-            font_medium = ImageFont.truetype("Inter-SemiBold.ttf", 36)
-        except:
-            font_large = ImageFont.load_default()
-            font_medium = ImageFont.load_default()
 
         # Draw Username (below avatar)
         user_name = member.display_name
