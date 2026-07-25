@@ -19,7 +19,7 @@ server_configs = db["server_configs"]
 # ==========================================
 # HARDCODED CHANNELS & IMMUNITY CONFIG
 # ==========================================
-WARNING_IMAGE_CHANNEL_ID = 1526989768595083384  # WHERE WARNING IMAGES GO
+ACTION_IMAGE_CHANNEL_ID = 1526989768595083384  # WHERE ALL ACTION IMAGES GO
 EMBED_LOG_CHANNEL_ID = 1528431460535500940      # FALLBACK FOR EMBEDS
 TEXT_WARN_CHANNEL_ID = 1528330771562106965      # PLAIN TEXT WARNINGS
 
@@ -313,9 +313,10 @@ class AdminActionConsumer(commands.Cog):
         welcome_cog = self.bot.get_cog("WelcomeSystem")
         if welcome_cog:
             try:
-                warn_channel = guild.get_channel(WARNING_IMAGE_CHANNEL_ID)
+                warn_channel = guild.get_channel(ACTION_IMAGE_CHANNEL_ID)
                 if warn_channel and isinstance(warn_channel, discord.TextChannel):
-                    file = await welcome_cog.build_warning_card(guild, member, reason, moderator_name, warn_count)
+                    # Use the new universal card
+                    file = await welcome_cog.build_action_card(guild, member, "warn", reason, moderator_name, warn_count)
                     await warn_channel.send(file=file)
             except Exception as e:
                 print(f"❌ Failed to send warning image card: {e}")
