@@ -14,6 +14,7 @@ db = client["vodevs_bot_data"]
 admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
 warning_users = db["warning_users"]
+server_configs = db["server_configs"]
 
 # ==========================================
 # HARDCODED CHANNELS & IMMUNITY CONFIG
@@ -85,13 +86,9 @@ class AdminActionConsumer(commands.Cog):
                         return
 
                 # 2. Role Hierarchy Immunity
-                # If the target has the Admin Role, check who is doing the action.
-                # If the moderator is the Owner, allow it. If they are a Mod, block it.
                 if ADMIN_ROLE_ID in [r.id for r in member.roles]:
                     # If the dashboard user is the Owner, allowed
                     if moderator_name == "Dashboard" or moderator_name == "Auto-Mod":
-                        # Allow if it's the Owner *or* if it's the Dashboard/Auto-Mod. 
-                        # (We will use moderator_name later to differentiate, but usually Dashboard = Owner/Admin)
                         pass
                     else:
                         # Block Mods from acting on Admins
@@ -116,7 +113,6 @@ class AdminActionConsumer(commands.Cog):
                     elif action_type == 'mute':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'remove_timeout':
-                        # Setting timeout to None instantly removes the timeout
                         await member.timeout(None, reason=reason)
                     elif action_type == 'warn':
                         await self.handle_warning(guild, member, reason, moderator_name)
@@ -214,6 +210,22 @@ class AdminActionConsumer(commands.Cog):
                 for i in range(len(options)):
                     if i < len(emojis): await sent_msg.add_reaction(emojis[i])
                 print(f"✅ [BOT] Created Poll in {channel.name}")
+
+            elif action['type'] == 'save_welcome_config':
+                # Import dynamically to avoid circular import issues
+                from cogs.welcome import WelcomeSystem
+                welcome_cog = self.bot.get_cog("WelcomeSystem")
+                if welcome_cog:
+                    guild_id_str = str(guild.id)
+                    if guild_id_str not in welcome_cog.welcome_settings:
+                        welcome_cog.welcome_settings[guild_id_str] = {}
+                    
+                    welcome_cog.welcome_settings[guild_id_str]["welcome_text"] = action.get('welcome_text', "Welcome to VoDevs!")
+                    welcome_cog.welcome_settings[guild_id_str]["circle_color"] = action.get('welcome_circle_color', "#d1a3ff")
+                    welcome_cog.welcome_settings[guild_id_str]["user_name_color"] = action.get('welcome_name_color', "#a1b0d6")
+                    welcome_cog.welcome_settings[guild_id_str]["welcome_text_color"] = action.get('welcome_msg_color', "#a1b0d6")
+                    welcome_cog.save_data()
+                    print(f"✅ [BOT] Welcome config saved for guild {guild.name}")
 
             admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
