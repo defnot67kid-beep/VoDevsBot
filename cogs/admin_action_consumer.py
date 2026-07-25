@@ -16,11 +16,14 @@ reaction_roles_collection = db["reaction_roles"]
 warning_users = db["warning_users"]
 
 # ==========================================
-# HARDCODED CHANNELS
+# HARDCODED CHANNELS & IMMUNITY CONFIG
 # ==========================================
 EMBED_LOG_CHANNEL_ID = 1528431460535500940    # WHERE ALL EMBEDS GO
 TEXT_WARN_CHANNEL_ID = 1528330771562106965     # WHERE PLAIN TEXT WARNINGS GO
-OWNER_ID = "1516568962966753291"               # IMMUNE USER
+
+OWNER_ID = "1516568962966753291"               # ABSOLUTE IMMUNITY
+ADMIN_ROLE_ID = 1527642221942276148            # ADMIN ROLE (IMMUNE FROM MODS)
+MOD_ROLE_ID = 1526977512654245928              # MOD ROLE (TRIGGERS ACTIONS)
 
 BAD_WORDS = ["nigger", "nigga", "faggot", "retard", "kike", "chink", "spic", "gook", "cunt", "whore", "slut", "rape", "pedophile"]
 
@@ -62,13 +65,15 @@ class AdminActionConsumer(commands.Cog):
 
             if action['type'] == 'mod_action':
                 user_id = int(action.get('user_id'))
+                moderator_name = action.get('moderator_name', 'Dashboard')
                 
                 # =======================================================
-                # 🛡️ OWNER IMMUNITY CHECK
-                # If the target user is the Owner, skip and mark as ignored.
+                # 🛡️ IMMUNITY & HIERARCHY CHECKS
                 # =======================================================
+                
+                # 1. Absolute Owner Immunity
                 if str(user_id) == OWNER_ID:
-                    print(f"🛡️ [BOT] Action skipped: {action['action']} on Owner ({user_id})")
+                    print(f"🛡️ [BOT] Action skipped: Owner ({user_id}) is immune.")
                     admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed", "error": "Owner immunity triggered."}})
                     return
 
@@ -79,10 +84,24 @@ class AdminActionConsumer(commands.Cog):
                         admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "error": "Member not found"}})
                         return
 
+                # 2. Role Hierarchy Immunity
+                # If the target has the Admin Role, check who is doing the action.
+                # If the moderator is the Owner, allow it. If they are a Mod, block it.
+                if ADMIN_ROLE_ID in [r.id for r in member.roles]:
+                    # If the dashboard user is the Owner, allowed
+                    if moderator_name == "Dashboard" or moderator_name == "Auto-Mod":
+                        # Allow if it's the Owner *or* if it's the Dashboard/Auto-Mod. 
+                        # (We will use moderator_name later to differentiate, but usually Dashboard = Owner/Admin)
+                        pass
+                    else:
+                        # Block Mods from acting on Admins
+                        print(f"🛡️ [BOT] Action blocked: Mod ({moderator_name}) tried to act on Admin ({member.display_name}).")
+                        admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed", "error": "Admin immune from Mod actions."}})
+                        return
+
                 action_type = action.get('action')
                 reason = action.get('reason', 'No reason provided.')
                 duration = int(action.get('duration', 60))
-                moderator_name = action.get('moderator_name', 'Dashboard')
 
                 try:
                     if action_type == 'kick': 
@@ -97,6 +116,7 @@ class AdminActionConsumer(commands.Cog):
                     elif action_type == 'mute':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'remove_timeout':
+                        # Setting timeout to None instantly removes the timeout
                         await member.timeout(None, reason=reason)
                     elif action_type == 'warn':
                         await self.handle_warning(guild, member, reason, moderator_name)
