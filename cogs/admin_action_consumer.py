@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 import pymongo
+import gridfs  # <--- ADD THIS
 import os
 from datetime import timedelta, datetime
 from bson.objectid import ObjectId
@@ -11,6 +12,8 @@ if not MONGO_URI:
 
 client = pymongo.MongoClient(MONGO_URI)
 db = client["vodevs_bot_data"]
+fs = gridfs.GridFS(db)  # <--- ADD THIS
+
 admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
 warning_users = db["warning_users"]
@@ -235,15 +238,14 @@ class AdminActionConsumer(commands.Cog):
                         welcome_cog.welcome_settings[guild_id_str] = {}
                     
                     asset_type = action.get('asset_type')
-                    filename = action.get('filename')
                     
                     if asset_type == 'background':
-                        welcome_cog.welcome_settings[guild_id_str]["welcome_background"] = filename
+                        welcome_cog.welcome_settings[guild_id_str]["welcome_background"] = action.get('file_id')
                     elif asset_type == 'font':
-                        welcome_cog.welcome_settings[guild_id_str]["custom_font"] = filename
+                        welcome_cog.welcome_settings[guild_id_str]["custom_font"] = action.get('file_id')
                     
                     welcome_cog.save_data()
-                    print(f"✅ [BOT] Updated welcome {asset_type} to {filename}")
+                    print(f"✅ [BOT] Updated welcome {asset_type} file ID in config")
 
             admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
