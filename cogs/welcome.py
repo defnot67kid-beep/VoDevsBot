@@ -168,6 +168,81 @@ class WelcomeSystem(commands.Cog):
         img_io.seek(0)
         return discord.File(fp=img_io, filename="welcome.png")
 
+    # ============================================
+    # BUILD WARNING IMAGE CARD
+    # ============================================
+    async def build_warning_card(self, guild: discord.Guild, member: discord.Member, reason: str, moderator_name: str, warn_count: int):
+        """Generates a custom image card for warnings."""
+        config = self.get_welcome_config(guild.id)
+        
+        canvas_width = 800
+        canvas_height = 350
+        
+        # -------------------------------------------------------------
+        # LOAD BACKGROUND FROM THE SAME FOLDER AS main.py
+        # -------------------------------------------------------------
+        bg_img = Image.new('RGB', (canvas_width, canvas_height), color=(54, 57, 63))
+        welcome_bg_path = os.path.join(os.path.dirname(__file__), "..", "welcome.png")
+        if os.path.exists(welcome_bg_path):
+            try:
+                bg_img = Image.open(welcome_bg_path).convert("RGB").resize((canvas_width, canvas_height), Image.LANCZOS)
+            except:
+                pass
+
+        img = bg_img.copy()
+        draw = ImageDraw.Draw(img)
+
+        circle_color = self.hex_to_rgb(config.get("circle_color", "#d1a3ff"))
+        name_color = self.hex_to_rgb(config.get("user_name_color", "#a1b0d6"))
+        text_color = self.hex_to_rgb("#ff5555") # Red color for warnings
+
+        # -------------------------------------------------------------
+        # LOAD FONT FROM THE SAME FOLDER AS main.py
+        # -------------------------------------------------------------
+        font_large = ImageFont.load_default()
+        font_medium = ImageFont.load_default()
+        font_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
+        if os.path.exists(font_path):
+            try:
+                font_large = ImageFont.truetype(font_path, 46)
+                font_medium = ImageFont.truetype(font_path, 36)
+            except:
+                pass
+
+        avatar_size = 180
+        circle_x = (canvas_width - avatar_size) // 2
+        circle_y = 30
+        draw.ellipse([circle_x - 10, circle_y - 10, circle_x + avatar_size + 10, circle_y + avatar_size + 10], fill=circle_color)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(member.display_avatar.with_format("png").url) as resp:
+                    if resp.status == 200:
+                        avatar_data = await resp.read()
+                        avatar_img = Image.open(io.BytesIO(avatar_data)).convert("RGBA")
+                        avatar_img = avatar_img.resize((avatar_size, avatar_size), Image.LANCZOS)
+                        mask = Image.new('L', (avatar_size, avatar_size), 0)
+                        mask_draw = ImageDraw.Draw(mask)
+                        mask_draw.ellipse((0, 0, avatar_size, avatar_size), fill=255)
+                        avatar_img.putalpha(mask)
+                        img.paste(avatar_img, (circle_x, circle_y), avatar_img)
+        except Exception as e:
+            print(f"❌ Error fetching avatar: {e}")
+
+        # Draw Username
+        user_name = member.display_name
+        username_text = user_name
+        draw.text((canvas_width / 2, circle_y + avatar_size + 20), username_text, fill=name_color, font=font_large, anchor="mm")
+
+        # Draw Warning Reason
+        warning_text = f"⚠️ {reason}"
+        draw.text((canvas_width / 2, circle_y + avatar_size + 80), warning_text, fill=text_color, font=font_medium, anchor="mm")
+
+        img_io = io.BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        return discord.File(fp=img_io, filename="warning.png")
+
     def hex_to_rgb(self, hex_code: str):
         """Convert hex color to RGB tuple."""
         hex_code = hex_code.lstrip('#')
