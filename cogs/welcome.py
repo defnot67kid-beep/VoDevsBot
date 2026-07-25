@@ -49,8 +49,6 @@ class WelcomeSystem(commands.Cog):
                 "enabled": False,
                 "channel_id": None,
                 "auto_roles": [],
-                "welcome_background": None,
-                "custom_font": None,
                 "welcome_text": "Welcome to VoDevs!",
                 "welcome_text_color": "#a1b0d6",
                 "user_name_color": "#a1b0d6",
@@ -104,54 +102,45 @@ class WelcomeSystem(commands.Cog):
         """Generates a custom image card similar to the screenshot."""
         config = self.get_welcome_config(member.guild.id)
         
-        # Define canvas size
         canvas_width = 800
         canvas_height = 350
         
-        # Determine the Background
-        bg_filename = config.get("welcome_background", None)
-        if bg_filename and os.path.exists(os.path.join("welcome_assets", bg_filename)):
-            bg_path = os.path.join("welcome_assets", bg_filename)
-            bg_img = Image.open(bg_path).convert("RGB").resize((canvas_width, canvas_height), Image.LANCZOS)
-        else:
-            # Default dark grey background
-            bg_img = Image.new('RGB', (canvas_width, canvas_height), color=(54, 57, 63))
-        
+        # -------------------------------------------------------------
+        # LOAD BACKGROUND FROM THE SAME FOLDER AS main.py
+        # -------------------------------------------------------------
+        bg_img = Image.new('RGB', (canvas_width, canvas_height), color=(54, 57, 63))
+        welcome_bg_path = os.path.join(os.path.dirname(__file__), "..", "welcome.png")
+        if os.path.exists(welcome_bg_path):
+            try:
+                bg_img = Image.open(welcome_bg_path).convert("RGB").resize((canvas_width, canvas_height), Image.LANCZOS)
+            except:
+                pass
+
         img = bg_img.copy()
         draw = ImageDraw.Draw(img)
 
-        # Colors from config
         circle_color = self.hex_to_rgb(config.get("circle_color", "#d1a3ff"))
         name_color = self.hex_to_rgb(config.get("user_name_color", "#a1b0d6"))
         text_color = self.hex_to_rgb(config.get("welcome_text_color", "#a1b0d6"))
 
-        # Determine the Fonts
-        font_filename = config.get("custom_font", None)
-        font_large = None
-        font_medium = None
-        
-        # Try loading custom font first, then fallback to Inter.ttf, then default
-        try:
-            if font_filename and os.path.exists(os.path.join("welcome_assets", font_filename)):
-                font_path = os.path.join("welcome_assets", font_filename)
+        # -------------------------------------------------------------
+        # LOAD FONT FROM THE SAME FOLDER AS main.py
+        # -------------------------------------------------------------
+        font_large = ImageFont.load_default()
+        font_medium = ImageFont.load_default()
+        font_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
+        if os.path.exists(font_path):
+            try:
                 font_large = ImageFont.truetype(font_path, 46)
                 font_medium = ImageFont.truetype(font_path, 36)
-            else:
-                # Fallback to "Inter-SemiBold.ttf" if available
-                font_large = ImageFont.truetype("Inter-SemiBold.ttf", 46)
-                font_medium = ImageFont.truetype("Inter-SemiBold.ttf", 36)
-        except:
-            # If both fail, use default
-            font_large = ImageFont.load_default()
-            font_medium = ImageFont.load_default()
+            except:
+                pass
 
-        # Draw the avatar circle border
         avatar_size = 180
         circle_x = (canvas_width - avatar_size) // 2
         circle_y = 30
         draw.ellipse([circle_x - 10, circle_y - 10, circle_x + avatar_size + 10, circle_y + avatar_size + 10], fill=circle_color)
 
-        # Fetch and paste the user's avatar (as a circle)
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(member.display_avatar.with_format("png").url) as resp:
@@ -159,28 +148,21 @@ class WelcomeSystem(commands.Cog):
                         avatar_data = await resp.read()
                         avatar_img = Image.open(io.BytesIO(avatar_data)).convert("RGBA")
                         avatar_img = avatar_img.resize((avatar_size, avatar_size), Image.LANCZOS)
-                        
-                        # Create circular mask for avatar
                         mask = Image.new('L', (avatar_size, avatar_size), 0)
                         mask_draw = ImageDraw.Draw(mask)
                         mask_draw.ellipse((0, 0, avatar_size, avatar_size), fill=255)
                         avatar_img.putalpha(mask)
-                        
-                        # Paste onto canvas
                         img.paste(avatar_img, (circle_x, circle_y), avatar_img)
         except Exception as e:
             print(f"❌ Error fetching avatar: {e}")
 
-        # Draw Username (below avatar)
         user_name = member.display_name
         username_text = user_name
         draw.text((canvas_width / 2, circle_y + avatar_size + 20), username_text, fill=name_color, font=font_large, anchor="mm")
 
-        # Draw Welcome Message
         welcome_text = config.get("welcome_text", "Welcome to VoDevs!")
         draw.text((canvas_width / 2, circle_y + avatar_size + 80), welcome_text, fill=text_color, font=font_medium, anchor="mm")
 
-        # Save to BytesIO
         img_io = io.BytesIO()
         img.save(img_io, 'PNG')
         img_io.seek(0)
