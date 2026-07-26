@@ -275,8 +275,7 @@ async def load_cogs():
         # Chat commands (deletemsg, sendmsgforuser)
         await bot.load_extension("cogs.chatcmds")
         
-        # Welcome System
-        await bot.load_extension("cogs.welcome") # Loaded twice? No, only once!
+
         
         logging.info("✅ All cogs loaded successfully")
     except Exception as e:
