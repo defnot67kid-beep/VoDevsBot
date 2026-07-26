@@ -106,8 +106,15 @@ class AdminActionConsumer(commands.Cog):
                     elif action_type == 'ban': 
                         await member.ban(reason=reason)
                     elif action_type == 'unban':
-                        try: await guild.unban(discord.Object(id=user_id), reason=reason)
-                        except discord.NotFound: raise Exception("User is not banned.")
+                        # ============================================
+                        # UNBAN LOGIC (Marks complete immediately)
+                        # ============================================
+                        try: 
+                            await guild.unban(discord.Object(id=user_id), reason=reason)
+                            admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
+                            print(f"✅ [BOT] UNBAN successful for User ID {user_id}")
+                        except discord.NotFound: 
+                            raise Exception("User is not banned.")
                     elif action_type == 'timeout':
                         await member.timeout(discord.utils.utcnow() + timedelta(seconds=duration), reason=reason)
                     elif action_type == 'mute':
@@ -130,7 +137,7 @@ class AdminActionConsumer(commands.Cog):
                 except discord.Forbidden: raise Exception("Bot missing permissions.")
                 except discord.NotFound: raise Exception("User/Role not found.")
                 
-                if action_type not in ['warn', 'clear_warnings', 'delete_single_warning']:
+                if action_type not in ['warn', 'clear_warnings', 'delete_single_warning', 'unban']:
                     print(f"✅ [BOT] Executed {action_type.upper()} on {member.display_name}")
 
             elif action['type'] == 'announcement':
