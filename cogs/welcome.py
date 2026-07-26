@@ -10,7 +10,7 @@ from typing import Optional, List
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import aiohttp
 import io
-import emoji  # <--- Must pip install emoji
+import emoji
 
 class WelcomeSystem(commands.Cog):
     """Advanced Welcome System with Custom Image Card"""
@@ -115,6 +115,7 @@ class WelcomeSystem(commands.Cog):
                     parts.append((char, False))
         
         current_x = x
+        text_anchor = "mm"
         
         for part_text, is_em in parts:
             if is_em:
@@ -122,7 +123,7 @@ class WelcomeSystem(commands.Cog):
                 bbox = draw.textbbox((0, 0), part_text, font=font_emoji)
                 width = bbox[2] - bbox[0]
                 draw.text((current_x, y), part_text, font=font_emoji, fill=fill, anchor="mm")
-                current_x += width - 5 # Slight spacing fix for emojis
+                current_x += width # Slight spacing fix for emojis
             else:
                 # Use roboto font
                 bbox = draw.textbbox((0, 0), part_text, font=font_text)
@@ -161,6 +162,7 @@ class WelcomeSystem(commands.Cog):
         # -------------------------------------------------------------
         # LOAD FONTS FROM THE SAME FOLDER AS main.py
         # -------------------------------------------------------------
+        # Default to standard fonts if missing
         font_large_roboto = ImageFont.load_default()
         font_medium_roboto = ImageFont.load_default()
         font_large_emoji = ImageFont.load_default()
@@ -169,12 +171,15 @@ class WelcomeSystem(commands.Cog):
         roboto_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
         emoji_path = os.path.join(os.path.dirname(__file__), "..", "NotoColorEmoji.ttf")
 
+        # Load Roboto
         if os.path.exists(roboto_path):
             try:
                 font_large_roboto = ImageFont.truetype(roboto_path, 46)
                 font_medium_roboto = ImageFont.truetype(roboto_path, 36)
             except:
                 pass
+                
+        # Load Emoji (same size as Roboto!)
         if os.path.exists(emoji_path):
             try:
                 font_large_emoji = ImageFont.truetype(emoji_path, 46)
@@ -259,6 +264,7 @@ class WelcomeSystem(commands.Cog):
         roboto_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
         emoji_path = os.path.join(os.path.dirname(__file__), "..", "NotoColorEmoji.ttf")
 
+        # Load Roboto
         if os.path.exists(roboto_path):
             try:
                 font_large_roboto = ImageFont.truetype(roboto_path, 40)
@@ -266,6 +272,8 @@ class WelcomeSystem(commands.Cog):
                 font_small_roboto = ImageFont.truetype(roboto_path, 20)
             except:
                 pass
+                
+        # Load Emoji (same size as Roboto!)
         if os.path.exists(emoji_path):
             try:
                 font_large_emoji = ImageFont.truetype(emoji_path, 40)
