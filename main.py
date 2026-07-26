@@ -1,455 +1,438 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
+import json
 import os
 import asyncio
-import json
-import logging
-import sys
+import re
+from datetime import datetime
+from typing import Optional, List
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+import aiohttp
 import io
-from dotenv import load_dotenv
-from datetime import datetime, timezone
 
-# ============================================
-# FIX: Force UTF-8 for Windows Terminals
-# ============================================
-if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
-
-load_dotenv()
-
-# Configuration
-BOT_TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID", 0))
-OWNER_IDS = [int(id.strip()) for id in os.getenv("OWNER_IDS", "").split(",") if id.strip()]
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log', encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-
-# Bot setup
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-# Global cooldown system
-cooldowns = {}
-
-# ============================================
-# COMMANDS
-# ============================================
-
-@bot.command()
-async def whoami(ctx):
-    """Get your Discord user ID"""
-    await ctx.send(f"Your User ID is: `{ctx.author.id}`")
-
-@bot.command(name="sync")
-@commands.is_owner()
-async def sync_commands(ctx):
-    """[Owner] Sync slash commands manually"""
+class WelcomeSystem(commands.Cog):
+    """Advanced Welcome System with Custom Image Card"""
     
-    if not ctx.guild:
-        await ctx.send("❌ This command must be used in a server!")
-        return
+    def __init__(self, bot):
+        self.bot = bot
+        self.welcome_settings = {}
+        self.welcome_messages = {}
+        self.load_data()
     
-    await ctx.send("🔄 Attempting to sync slash commands...")
-    await ctx.send("⏳ This may take a moment...")
-    
-    try:
-        if GUILD_ID:
+    def load_data(self):
+        """Load welcome settings from JSON file"""
+        if os.path.exists("welcome_data.json"):
             try:
-                guild = discord.Object(id=GUILD_ID)
-                bot.tree.copy_global_to(guild=guild)
-                await bot.tree.sync(guild=guild)
-                await ctx.send(f"✅ Commands synced to guild: {GUILD_ID}")
-                return
-            except discord.Forbidden:
-                await ctx.send("⚠️ Cannot sync to specific guild. Trying global sync...")
-        
-        try:
-            await bot.tree.sync()
-            await ctx.send("✅ Commands synced globally! (May take up to 1 hour to appear in Discord)")
-        except discord.Forbidden:
-            await ctx.send("❌ Bot doesn't have the required permissions!")
-            await ctx.send("📌 Please re-invite the bot with the correct scopes:")
-            await ctx.send(f"🔗 https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands")
-            
-    except Exception as e:
-        await ctx.send(f"❌ Failed to sync commands: {e}")
-
-@bot.command(name="syncglobal")
-@commands.is_owner()
-async def sync_global(ctx):
-    """[Owner] Sync slash commands globally"""
-    try:
-        await bot.tree.sync()
-        await ctx.send("✅ Commands synced globally! (May take up to 1 hour to appear)")
-    except discord.Forbidden:
-        await ctx.send("❌ Bot doesn't have the `applications.commands` scope!")
-        await ctx.send(f"🔗 Re-invite: https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands")
-    except Exception as e:
-        await ctx.send(f"❌ Failed to sync commands: {e}")
-
-@bot.command(name="botstatus")
-@commands.is_owner()
-async def bot_status(ctx):
-    """[Owner] Check bot permissions and status"""
+                with open("welcome_data.json", "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.welcome_settings = data.get("settings", {})
+                    self.welcome_messages = data.get("messages", {})
+            except:
+                self.welcome_settings = {}
+                self.welcome_messages = {}
     
-    embed = discord.Embed(
-        title="🤖 Bot Status",
-        color=discord.Color.blue(),
-        timestamp=datetime.now(timezone.utc)
-    )
+    def save_data(self):
+        """Save welcome settings to JSON file"""
+        data = {
+            "settings": self.welcome_settings,
+            "messages": self.welcome_messages
+        }
+        with open("welcome_data.json", "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
     
-    # Basic info
-    embed.add_field(
-        name="📊 Server Info",
-        value=f"Server: {ctx.guild.name}\nMembers: {ctx.guild.member_count}\nBot Name: {ctx.guild.me.display_name}",
-        inline=False
-    )
+    def get_welcome_config(self, guild_id: int) -> dict:
+        """Get or create welcome config for a guild"""
+        guild_id = str(guild_id)
+        if guild_id not in self.welcome_settings:
+            self.welcome_settings[guild_id] = {
+                "enabled": False,
+                "channel_id": None,
+                "auto_roles": [],
+                "welcome_text": "Welcome to VoDevs!",
+                "welcome_text_color": "#a1b0d6",
+                "user_name_color": "#a1b0d6",
+                "circle_color": "#d1a3ff"
+            }
+            self.save_data()
+        return self.welcome_settings[guild_id]
     
-    # Check permissions
-    perms = ctx.guild.me.guild_permissions
-    
-    perm_list = [
-        ("Administrator", perms.administrator),
-        ("Manage Channels", perms.manage_channels),
-        ("Manage Roles", perms.manage_roles),
-        ("Manage Messages", perms.manage_messages),
-        ("Kick Members", perms.kick_members),
-        ("Ban Members", perms.ban_members),
-        ("Moderate Members", perms.moderate_members),
-        ("Use Slash Commands", perms.use_application_commands),
-        ("Manage Webhooks", perms.manage_webhooks),
-        ("View Channel", perms.view_channel),
-        ("Send Messages", perms.send_messages),
-        ("Read Message History", perms.read_message_history),
-    ]
-    
-    perm_text = "\n".join([f"{'✅' if p else '❌'} {name}" for name, p in perm_list])
-    embed.add_field(name="🔑 Permissions", value=perm_text, inline=False)
-    
-    # Slash command status
-    try:
-        # Try to sync to check if we have permission
-        if GUILD_ID:
-            guild = discord.Object(id=GUILD_ID)
-            bot.tree.copy_global_to(guild=guild)
-            await bot.tree.sync(guild=guild)
-            embed.add_field(name="🔄 Slash Commands", value="✅ Synced to guild", inline=False)
+    # ============================================
+    # HELPER FUNCTIONS FOR ROLE PARSING
+    # ============================================
+    def parse_roles(self, guild: discord.Guild, role_input: str) -> List[discord.Role]:
+        roles = []
+        role_input = role_input.strip()
+        if not role_input or role_input.lower() in ["none", "clear", "remove"]:
+            return []
+        for sep in [';', ',', ' ']:
+            if sep in role_input:
+                parts = role_input.split(sep)
+                break
         else:
-            await bot.tree.sync()
-            embed.add_field(name="🔄 Slash Commands", value="✅ Synced globally", inline=False)
-    except discord.Forbidden:
-        embed.add_field(
-            name="🔄 Slash Commands",
-            value="❌ Missing `applications.commands` scope!\nRe-invite the bot with the correct scopes.",
-            inline=False
-        )
-    except Exception as e:
-        embed.add_field(name="🔄 Slash Commands", value=f"❌ {str(e)[:100]}", inline=False)
-    
-    # Invite link
-    embed.add_field(
-        name="🔗 Invite Link",
-        value=f"[Click to re-invite with correct permissions](https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands)",
-        inline=False
-    )
-    
-    embed.set_footer(text=f"Bot ID: {bot.user.id}")
-    
-    await ctx.send(embed=embed)
-
-@bot.command(name="load")
-@commands.is_owner()
-async def load_cog(ctx, cog: str):
-    """[Owner] Load a cog"""
-    try:
-        await bot.load_extension(f"cogs.{cog}")
-        await ctx.send(f"✅ Loaded cog: {cog}")
-    except Exception as e:
-        await ctx.send(f"❌ Failed to load cog: {e}")
-
-@bot.command(name="unload")
-@commands.is_owner()
-async def unload_cog(ctx, cog: str):
-    """[Owner] Unload a cog"""
-    try:
-        await bot.unload_extension(f"cogs.{cog}")
-        await ctx.send(f"✅ Unloaded cog: {cog}")
-    except Exception as e:
-        await ctx.send(f"❌ Failed to unload cog: {e}")
-
-@bot.command(name="reload")
-@commands.is_owner()
-async def reload_cog(ctx, cog: str):
-    """[Owner] Reload a cog"""
-    try:
-        await bot.reload_extension(f"cogs.{cog}")
-        await ctx.send(f"✅ Reloaded cog: {cog}")
-    except Exception as e:
-        await ctx.send(f"❌ Failed to reload cog: {e}")
-
-@bot.command(name="listcogs")
-@commands.is_owner()
-async def list_cogs(ctx):
-    """[Owner] List all loaded cogs"""
-    loaded = list(bot.extensions.keys())
-    if loaded:
-        embed = discord.Embed(
-            title="📦 Loaded Cogs",
-            color=discord.Color.blue()
-        )
-        for cog in sorted(loaded):
-            embed.add_field(name=cog, value="✅ Loaded", inline=False)
-        await ctx.send(embed=embed)
-    else:
-        await ctx.send("❌ No cogs loaded.")
-
-# ============================================
-# Load cogs
-# ============================================
-async def load_cogs():
-    try:
-        # Core cogs
-        await bot.load_extension("cogs.admin_core")
-        # REMOVED: await bot.load_extension("cogs.moderation_elite")
-        await bot.load_extension("cogs.utility_mega")
-        
-        # Fun & Games
-        await bot.load_extension("cogs.game_engine")
-        await bot.load_extension("cogs.fun_explosion")
-        await bot.load_extension("cogs.social_interaction")
-        
-        # Economy & Leveling
-        await bot.load_extension("cogs.economy_ultra")
-        await bot.load_extension("cogs.levelbot")    # <--- YOUR LEVELBOT
-        
-        # Media & Entertainment
-        await bot.load_extension("cogs.music_ultimate")
-        await bot.load_extension("cogs.anime_weeb")
-        
-        # --- SETTINGS BACKUP COG ---
-        await bot.load_extension("cogs.settings")    # <--- BACKUP MANAGER
-        
-        # Features
-        await bot.load_extension("cogs.giveaway_raffle")
-        await bot.load_extension("cogs.voice_channel")
-        await bot.load_extension("cogs.reaction_roles") # <--- CONVERTED TO MONGODB
-        await bot.load_extension("cogs.pingperm")
-        await bot.load_extension("cogs.poll")
-        await bot.load_extension("cogs.autorr")        # <--- YOUR AUTORR
-        await bot.load_extension("cogs.giverole")      # <--- GIVEROLE COG
-        await bot.load_extension("cogs.logging_audit")
-        await bot.load_extension("cogs.permissions")   # <--- PERMISSIONS COG
-        
-        # ==============================================
-        # NEW CRITICAL COGS FOR DASHBOARD INTEGRATION
-        # ==============================================
-        await bot.load_extension("cogs.admingiver")      # <--- ADMIN/OWNER LINK GENERATOR
-        await bot.load_extension("cogs.server_cache")    # <--- CACHES ROLES/CHANNELS
-        await bot.load_extension("cogs.user_cache")      # <--- CACHES USERS
-        await bot.load_extension("cogs.admin_action_consumer") # <--- CONSUMES QUEUE + WARNINGS
-        
-        # Optional cogs (can be disabled if needed)
-        try:
-            await bot.load_extension("cogs.nsfw_optional")
-        except Exception as e:
-            logging.warning(f"⚠️ NSFW cog not loaded: {e}")
-        
-        try:
-            await bot.load_extension("cogs.ai_integration")
-        except Exception as e:
-            logging.warning(f"⚠️ AI cog not loaded: {e}")
-        
-        # Ticket system
-        await bot.load_extension("cogs.ticket")
-        
-        # Chat commands (deletemsg, sendmsgforuser)
-        await bot.load_extension("cogs.chatcmds")
-        
-        # Welcome System
-        await bot.load_extension("cogs.welcome")
-        
-        logging.info("✅ All cogs loaded successfully")
-    except Exception as e:
-        logging.error(f"❌ Failed to load cogs: {e}")
-        raise e
-
-# ============================================
-# EVENT HANDLERS
-# ============================================
-
-@bot.event
-async def on_ready():
-    logging.info(f"✅ Logged in as {bot.user}")
-    logging.info(f"📊 Serving {len(bot.guilds)} guilds")
-    logging.info(f"👥 Watching {len(bot.users)} users")
-    logging.info(f"👑 Owners: {OWNER_IDS}")
-    
-    # Set presence
-    await bot.change_presence(
-        activity=discord.Activity(
-            type=discord.ActivityType.watching,
-            name=f"{len(bot.guilds)} servers | /help"
-        )
-    )
-    
-    # Sync slash commands - IMPROVED ERROR HANDLING
-    try:
-        if GUILD_ID:
-            guild = discord.Object(id=GUILD_ID)
-            try:
-                # Check if we have permission to sync
-                bot.tree.copy_global_to(guild=guild)
-                await bot.tree.sync(guild=guild)
-                logging.info(f"✅ Commands synced to guild: {GUILD_ID}")
-            except discord.Forbidden:
-                logging.warning("⚠️ Cannot sync to specific guild (missing permissions). Syncing globally instead.")
+            parts = [role_input]
+        for part in parts:
+            part = part.strip()
+            if not part: continue
+            role = None
+            if part.startswith('<@&') and part.endswith('>'):
                 try:
-                    await bot.tree.sync()
-                    logging.info("✅ Commands synced globally")
-                except discord.Forbidden:
-                    logging.error("❌ Bot doesn't have applications.commands scope!")
-                    logging.info(f"📌 Re-invite the bot with: https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands")
-        else:
+                    role_id = int(part.replace('<@&', '').replace('>', ''))
+                    role = guild.get_role(role_id)
+                except: pass
+            if not role and part.isdigit():
+                role = guild.get_role(int(part))
+            if not role:
+                for r in guild.roles:
+                    if r.name.lower() == part.lower():
+                        role = r
+                        break
+            if not role:
+                for r in guild.roles:
+                    if part.lower() in r.name.lower():
+                        role = r
+                        break
+            if role: roles.append(role)
+        return roles
+
+    # ============================================
+    # BUILD WELCOME IMAGE CARD
+    # ============================================
+    async def build_welcome_card(self, member: discord.Member):
+        """Generates a custom image card similar to the screenshot."""
+        config = self.get_welcome_config(member.guild.id)
+        
+        canvas_width = 800
+        canvas_height = 350
+        
+        # -------------------------------------------------------------
+        # LOAD BACKGROUND FROM THE SAME FOLDER AS main.py
+        # -------------------------------------------------------------
+        bg_img = Image.new('RGB', (canvas_width, canvas_height), color=(54, 57, 63))
+        welcome_bg_path = os.path.join(os.path.dirname(__file__), "..", "welcome.png")
+        if os.path.exists(welcome_bg_path):
             try:
-                await bot.tree.sync()
-                logging.info("✅ Commands synced globally")
-            except discord.Forbidden:
-                logging.error("❌ Bot doesn't have applications.commands scope!")
-                logging.info(f"📌 Re-invite the bot with: https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands")
-                
-    except discord.Forbidden as e:
-        logging.error(f"❌ Failed to sync commands: {e}")
-        logging.info(f"📌 Re-invite the bot with: https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot+applications.commands")
-    except Exception as e:
-        logging.error(f"❌ Failed to sync commands: {e}")
+                bg_img = Image.open(welcome_bg_path).convert("RGB").resize((canvas_width, canvas_height), Image.LANCZOS)
+            except:
+                pass
 
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandOnCooldown):
-        await ctx.send(f"⏳ This command is on cooldown. Try again in {error.retry_after:.1f}s.")
-    elif isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ You don't have permission to use this command.")
-    elif isinstance(error, commands.BotMissingPermissions):
-        await ctx.send("❌ I don't have permission to do that.")
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"❌ Missing required argument: `{error.param.name}`")
-    elif isinstance(error, commands.BadArgument):
-        await ctx.send(f"❌ Invalid argument: {error}")
-    elif isinstance(error, commands.CommandNotFound):
-        # Silently ignore command not found errors (prevents spam)
-        pass
-    else:
-        logging.error(f"❌ Command error: {error}")
-        await ctx.send(f"❌ An error occurred: {str(error)[:100]}")
+        img = bg_img.copy()
+        draw = ImageDraw.Draw(img)
 
-@bot.event
-async def on_application_command_error(interaction, error):
-    """Handle slash command errors"""
-    if isinstance(error, discord.app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
-    elif isinstance(error, discord.app_commands.errors.BotMissingPermissions):
-        await interaction.response.send_message("❌ I don't have permission to do that.", ephemeral=True)
-    elif isinstance(error, discord.app_commands.errors.CommandOnCooldown):
-        await interaction.response.send_message(f"⏳ This command is on cooldown. Try again in {error.retry_after:.1f}s.", ephemeral=True)
-    elif isinstance(error, discord.app_commands.errors.MissingRequiredArgument):
-        await interaction.response.send_message(f"❌ Missing required argument: `{error.param.name}`", ephemeral=True)
-    else:
-        logging.error(f"❌ Slash command error: {error}")
+        circle_color = self.hex_to_rgb(config.get("circle_color", "#d1a3ff"))
+        name_color = self.hex_to_rgb(config.get("user_name_color", "#a1b0d6"))
+        text_color = self.hex_to_rgb(config.get("welcome_text_color", "#a1b0d6"))
+
+        # -------------------------------------------------------------
+        # LOAD FONT FROM THE SAME FOLDER AS main.py
+        # -------------------------------------------------------------
+        font_large = ImageFont.load_default()
+        font_medium = ImageFont.load_default()
+        font_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
+        if os.path.exists(font_path):
+            try:
+                font_large = ImageFont.truetype(font_path, 46)
+                font_medium = ImageFont.truetype(font_path, 36)
+            except:
+                pass
+
+        avatar_size = 180
+        circle_x = (canvas_width - avatar_size) // 2
+        circle_y = 30
+        draw.ellipse([circle_x - 10, circle_y - 10, circle_x + avatar_size + 10, circle_y + avatar_size + 10], fill=circle_color)
+
         try:
-            await interaction.response.send_message(f"❌ An error occurred: {str(error)[:100]}", ephemeral=True)
-        except:
-            await interaction.followup.send(f"❌ An error occurred: {str(error)[:100]}", ephemeral=True)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(member.display_avatar.with_format("png").url) as resp:
+                    if resp.status == 200:
+                        avatar_data = await resp.read()
+                        avatar_img = Image.open(io.BytesIO(avatar_data)).convert("RGBA")
+                        avatar_img = avatar_img.resize((avatar_size, avatar_size), Image.LANCZOS)
+                        mask = Image.new('L', (avatar_size, avatar_size), 0)
+                        mask_draw = ImageDraw.Draw(mask)
+                        mask_draw.ellipse((0, 0, avatar_size, avatar_size), fill=255)
+                        avatar_img.putalpha(mask)
+                        img.paste(avatar_img, (circle_x, circle_y), avatar_img)
+        except Exception as e:
+            print(f"❌ Error fetching avatar: {e}")
 
-# ============================================
-# GLOBAL HELPERS
-# ============================================
+        user_name = member.display_name
+        username_text = user_name
+        draw.text((canvas_width / 2, circle_y + avatar_size + 20), username_text, fill=name_color, font=font_large, anchor="mm")
 
-async def delete_message_after_delay(message, delay=5):
-    """Delete a message after a delay"""
-    await asyncio.sleep(delay)
-    try:
-        await message.delete()
-    except:
-        pass
+        welcome_text = config.get("welcome_text", "Welcome to VoDevs!")
+        draw.text((canvas_width / 2, circle_y + avatar_size + 80), welcome_text, fill=text_color, font=font_medium, anchor="mm")
 
-def is_owner(user_id):
-    """Check if a user is an owner"""
-    return user_id in OWNER_IDS
+        img_io = io.BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        return discord.File(fp=img_io, filename="welcome.png")
 
-def is_admin_or_owner(member):
-    """Check if a user is an admin or owner"""
-    if is_owner(member.id):
-        return True
-    return member.guild_permissions.administrator
+    # ============================================
+    # BUILD MODERATION ACTION CARD (UNIFIED)
+    # ============================================
+    async def build_action_card(self, guild: discord.Guild, member: discord.Member, action_type: str, reason: str, moderator_name: str, warn_count: int = 0):
+        """
+        Generates a unified card for ALL Moderation Actions.
+        Uses the same style as the Welcome Card, but with dynamic text.
+        """
+        config = self.get_welcome_config(guild.id)
+        
+        canvas_width = 800
+        canvas_height = 350
+        
+        # -------------------------------------------------------------
+        # LOAD BACKGROUND FROM THE SAME FOLDER AS main.py
+        # -------------------------------------------------------------
+        bg_img = Image.new('RGB', (canvas_width, canvas_height), color=(54, 57, 63))
+        welcome_bg_path = os.path.join(os.path.dirname(__file__), "..", "welcome.png")
+        if os.path.exists(welcome_bg_path):
+            try:
+                bg_img = Image.open(welcome_bg_path).convert("RGB").resize((canvas_width, canvas_height), Image.LANCZOS)
+            except:
+                pass
 
-# ============================================
-# ERROR HANDLING FOR COG LOADING
-# ============================================
+        img = bg_img.copy()
+        draw = ImageDraw.Draw(img)
 
-class MissingCogError(Exception):
-    pass
+        # Colors (Red text for actions, Light blue for names)
+        circle_color = self.hex_to_rgb(config.get("circle_color", "#d1a3ff"))
+        name_color = self.hex_to_rgb(config.get("user_name_color", "#a1b0d6"))
+        action_text_color = self.hex_to_rgb("#ff5555") # Red for the action status
+        reason_text_color = self.hex_to_rgb("#ffaaaa") # Lighter red for reason
 
-def ensure_cog_exists(cog_name):
-    """Check if a cog file exists"""
-    cog_path = os.path.join("cogs", f"{cog_name}.py")
-    if not os.path.exists(cog_path):
-        raise MissingCogError(f"Cog file not found: {cog_path}")
-    return True
+        # -------------------------------------------------------------
+        # LOAD FONT FROM THE SAME FOLDER AS main.py
+        # -------------------------------------------------------------
+        font_large = ImageFont.load_default()
+        font_medium = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+        font_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
+        if os.path.exists(font_path):
+            try:
+                font_large = ImageFont.truetype(font_path, 40) # Reduced from 46
+                font_medium = ImageFont.truetype(font_path, 26) # Reduced from 30
+                font_small = ImageFont.truetype(font_path, 20)  # Reduced from 22
+            except:
+                pass
 
-# ============================================
-# MAIN ENTRY POINT
-# ============================================
+        avatar_size = 160 # Reduced from 180
+        circle_x = (canvas_width - avatar_size) // 2
+        circle_y = 40 # Moved up slightly
+        draw.ellipse([circle_x - 10, circle_y - 10, circle_x + avatar_size + 10, circle_y + avatar_size + 10], fill=circle_color)
 
-if __name__ == "__main__":
-    # Create cogs directory if it doesn't exist
-    if not os.path.exists("cogs"):
-        os.makedirs("cogs")
-        logging.info("📁 Created cogs directory")
-    
-    # Create __init__.py in cogs if it doesn't exist
-    init_path = os.path.join("cogs", "__init__.py")
-    if not os.path.exists(init_path):
-        with open(init_path, "w") as f:
-            f.write("# This file makes the cogs folder a Python package\n")
-        logging.info("📁 Created cogs/__init__.py")
-    
-    # Check if token exists
-    if not BOT_TOKEN:
-        logging.error("❌ DISCORD_TOKEN not found in .env file!")
-        logging.error("📌 Please create a .env file with DISCORD_TOKEN=your_token_here")
-        sys.exit(1)
-    
-    # Create welcome_data.json if it doesn't exist
-    if not os.path.exists("welcome_data.json"):
-        with open("welcome_data.json", "w") as f:
-            json.dump({"settings": {}, "messages": {}}, f, indent=4)
-        logging.info("📁 Created welcome_data.json")
-    
-    # Run the bot
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    try:
-        loop.run_until_complete(load_cogs())
-    except Exception as e:
-        logging.error(f"❌ Failed to load cogs: {e}")
-        sys.exit(1)
-    
-    try:
-        bot.run(BOT_TOKEN)
-    except discord.LoginFailure:
-        logging.error("❌ Invalid bot token! Please check your .env file.")
-    except discord.PrivilegedIntentsRequired:
-        logging.error("❌ Privileged intents required! Enable them in the Discord Developer Portal.")
-        logging.error("📌 Go to: https://discord.com/developers/applications/")
-    except Exception as e:
-        logging.error(f"❌ Fatal error: {e}")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(member.display_avatar.with_format("png").url) as resp:
+                    if resp.status == 200:
+                        avatar_data = await resp.read()
+                        avatar_img = Image.open(io.BytesIO(avatar_data)).convert("RGBA")
+                        avatar_img = avatar_img.resize((avatar_size, avatar_size), Image.LANCZOS)
+                        mask = Image.new('L', (avatar_size, avatar_size), 0)
+                        mask_draw = ImageDraw.Draw(mask)
+                        mask_draw.ellipse((0, 0, avatar_size, avatar_size), fill=255)
+                        avatar_img.putalpha(mask)
+                        img.paste(avatar_img, (circle_x, circle_y), avatar_img)
+        except Exception as e:
+            print(f"❌ Error fetching avatar: {e}")
+
+        # 1. Draw Username
+        user_name = member.display_name
+        draw.text((canvas_width / 2, circle_y + avatar_size + 12), user_name, fill=name_color, font=font_large, anchor="mm")
+
+        # 2. Draw Action Type (e.g. "has been WARNED")
+        action_text = f"has been {action_type.upper()}"
+        draw.text((canvas_width / 2, circle_y + avatar_size + 52), action_text, fill=action_text_color, font=font_medium, anchor="mm")
+
+        # 3. Draw the Reason (handling long text)
+        if reason:
+            # If reason is longer than 40 characters, split it into two lines to prevent clipping
+            display_reason = reason
+            if len(display_reason) > 40:
+                split_point = display_reason.rfind(' ', 0, 40)
+                if split_point == -1: split_point = 40
+                line1 = display_reason[:split_point]
+                line2 = display_reason[split_point:].strip()
+                
+                draw.text((canvas_width / 2, circle_y + avatar_size + 82), f"Reason: {line1}", fill=reason_text_color, font=font_small, anchor="mm")
+                draw.text((canvas_width / 2, circle_y + avatar_size + 104), line2, fill=reason_text_color, font=font_small, anchor="mm")
+            else:
+                draw.text((canvas_width / 2, circle_y + avatar_size + 82), f"Reason: {display_reason}", fill=reason_text_color, font=font_small, anchor="mm")
+
+        # 4. If it's a WARNING, show the warning count
+        if action_type.lower() == "warn" and warn_count > 0:
+            count_text = f"Total Warnings: {warn_count}"
+            # If the reason was split, place the count lower. Otherwise, keep it standard.
+            if len(reason) > 40:
+                draw.text((canvas_width / 2, circle_y + avatar_size + 126), count_text, fill=reason_text_color, font=font_small, anchor="mm")
+            else:
+                draw.text((canvas_width / 2, circle_y + avatar_size + 104), count_text, fill=reason_text_color, font=font_small, anchor="mm")
+
+        img_io = io.BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        return discord.File(fp=img_io, filename="action.png")
+
+    # ============================================
+    # HELPER: CONVERT HEX TO RGB
+    # ============================================
+    def hex_to_rgb(self, hex_code: str):
+        """Convert hex color to RGB tuple."""
+        hex_code = hex_code.lstrip('#')
+        return tuple(int(hex_code[i:i+2], 16) for i in (0, 2, 4))
+
+    # ============================================
+    # SLASH COMMANDS
+    # ============================================
+    @app_commands.command(name="welcome_setup", description="[Admin] Set up the welcome system")
+    @app_commands.default_permissions(administrator=True)
+    async def welcome_setup_slash(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="🎉 Welcome System Setup", description="Welcome to the welcome system setup!", color=discord.Color.blue())
+        embed.add_field(name="📋 Step 1", value="Use `/welcome_channel #channel` to set the welcome channel", inline=False)
+        embed.add_field(name="📋 Step 2", value="Use `/welcome_roles @role` to set auto-roles", inline=False)
+        embed.add_field(name="📋 Step 3", value="Use `/welcome_enable` to turn the system ON", inline=False)
+        embed.set_footer(text="Need help? Use /help")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="welcome_enable", description="[Admin] Enable or disable the welcome system")
+    @app_commands.default_permissions(administrator=True)
+    async def welcome_enable_slash(self, interaction: discord.Interaction, enabled: bool):
+        config = self.get_welcome_config(interaction.guild.id)
+        config["enabled"] = enabled
+        self.save_data()
+        status = "✅ **Enabled**" if enabled else "❌ **Disabled**"
+        embed = discord.Embed(title="🎉 Welcome System Status", description=f"Welcome system is now {status}", color=discord.Color.green() if enabled else discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="welcome_channel", description="[Admin] Set the welcome channel")
+    @app_commands.default_permissions(administrator=True)
+    async def welcome_channel_slash(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        config = self.get_welcome_config(interaction.guild.id)
+        config["channel_id"] = str(channel.id)
+        self.save_data()
+        embed = discord.Embed(title="✅ Welcome Channel Set", description=f"Welcome messages will be sent to {channel.mention}", color=discord.Color.green())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="welcome_roles", description="[Admin] Set auto-roles for new members")
+    @app_commands.default_permissions(administrator=True)
+    async def welcome_roles_slash(self, interaction: discord.Interaction, roles: str):
+        config = self.get_welcome_config(interaction.guild.id)
+        role_list = self.parse_roles(interaction.guild, roles)
+        config["auto_roles"] = [role.id for role in role_list]
+        self.save_data()
+        if role_list:
+            role_mentions = [f"<@&{role.id}>" for role in role_list]
+            embed = discord.Embed(title="✅ Auto-Roles Set", description=f"New members will receive: {', '.join(role_mentions)}", color=discord.Color.green())
+        else:
+            embed = discord.Embed(title="✅ Auto-Roles Cleared", description="No roles will be auto-assigned.", color=discord.Color.orange())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="welcome_preview", description="[Admin] Preview the welcome image")
+    @app_commands.default_permissions(administrator=True)
+    async def welcome_preview_slash(self, interaction: discord.Interaction):
+        config = self.get_welcome_config(interaction.guild.id)
+        if not config.get("enabled", False):
+            await interaction.response.send_message("⚠️ Welcome system is currently **disabled**. Use `/welcome_enable` to enable it.", ephemeral=True)
+            return
+        
+        file = await self.build_welcome_card(interaction.user)
+        await interaction.response.send_message(file=file, ephemeral=True)
+
+    # ============================================
+    # PREFIX COMMANDS
+    # ============================================
+    @commands.command(name="wsetup")
+    @commands.has_permissions(administrator=True)
+    async def wsetup(self, ctx):
+        embed = discord.Embed(title="🎉 Welcome System Setup", description="Welcome to the welcome system setup!", color=discord.Color.blue())
+        embed.add_field(name="📋 Step 1", value="Use `!wchannel #channel` to set the welcome channel", inline=False)
+        embed.add_field(name="📋 Step 2", value="Use `!wroles @role` to set auto-roles", inline=False)
+        embed.add_field(name="📋 Step 3", value="Use `!wenable` to turn the system ON", inline=False)
+        embed.set_footer(text="Need help? Use !help")
+        await ctx.send(embed=embed)
+
+    @commands.command(name="wenable")
+    @commands.has_permissions(administrator=True)
+    async def wenable(self, ctx, status: str = None):
+        config = self.get_welcome_config(ctx.guild.id)
+        if status is None:
+            config["enabled"] = not config.get("enabled", False)
+        else:
+            config["enabled"] = status.lower() in ["true", "on", "enable", "yes", "1"]
+        self.save_data()
+        status_text = "✅ **Enabled**" if config["enabled"] else "❌ **Disabled**"
+        await ctx.send(f"🎉 Welcome system is now {status_text}")
+
+    @commands.command(name="wchannel")
+    @commands.has_permissions(administrator=True)
+    async def wchannel(self, ctx, channel: discord.TextChannel):
+        config = self.get_welcome_config(ctx.guild.id)
+        config["channel_id"] = str(channel.id)
+        self.save_data()
+        await ctx.send(f"✅ Welcome channel set to {channel.mention}")
+
+    @commands.command(name="wroles")
+    @commands.has_permissions(administrator=True)
+    async def wroles(self, ctx, *, roles: str):
+        config = self.get_welcome_config(ctx.guild.id)
+        role_list = self.parse_roles(ctx.guild, roles)
+        config["auto_roles"] = [role.id for role in role_list]
+        self.save_data()
+        if role_list:
+            role_mentions = [f"<@&{role.id}>" for role in role_list]
+            await ctx.send(f"✅ New members will receive: {', '.join(role_mentions)}")
+        else:
+            await ctx.send("✅ Auto-roles cleared.")
+
+    @commands.command(name="wpreview")
+    @commands.has_permissions(administrator=True)
+    async def wpreview(self, ctx):
+        config = self.get_welcome_config(ctx.guild.id)
+        if not config.get("enabled", False):
+            await ctx.send("⚠️ Welcome system is currently **disabled**. Use `!wenable` to enable it.")
+            return
+        file = await self.build_welcome_card(ctx.author)
+        await ctx.send(file=file)
+
+    @commands.command(name="wremove")
+    @commands.has_permissions(administrator=True)
+    async def wremove(self, ctx):
+        guild_id = str(ctx.guild.id)
+        if guild_id in self.welcome_settings:
+            del self.welcome_settings[guild_id]
+            self.save_data()
+            await ctx.send("🗑️ All welcome settings have been removed for this server.")
+        else:
+            await ctx.send("❌ No welcome settings found for this server.")
+
+    # ==========================================
+    # EVENT HANDLERS
+    # ==========================================
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        guild = member.guild
+        guild_id = str(guild.id)
+        if guild_id not in self.welcome_settings: return
+        config = self.welcome_settings[guild_id]
+        if not config.get("enabled", False): return
+
+        # Assign auto-roles
+        for role_id in config.get("auto_roles", []):
+            role = guild.get_role(role_id)
+            if role:
+                try: await member.add_roles(role, reason="Auto-role on join")
+                except: pass
+
+        # Send welcome image card
+        channel_id = config.get("channel_id")
+        if channel_id:
+            channel = guild.get_channel(int(channel_id))
+            if channel:
+                try:
+                    file = await self.build_welcome_card(member)
+                    await channel.send(file=file)
+                except Exception as e:
+                    print(f"❌ Failed to send welcome card: {e}")
+
+async def setup(bot):
+    await bot.add_cog(WelcomeSystem(bot))
