@@ -210,15 +210,15 @@ class WelcomeSystem(commands.Cog):
         font_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
         if os.path.exists(font_path):
             try:
-                font_large = ImageFont.truetype(font_path, 46)
-                font_medium = ImageFont.truetype(font_path, 30)
-                font_small = ImageFont.truetype(font_path, 22)
+                font_large = ImageFont.truetype(font_path, 40) # Reduced from 46
+                font_medium = ImageFont.truetype(font_path, 26) # Reduced from 30
+                font_small = ImageFont.truetype(font_path, 20)  # Reduced from 22
             except:
                 pass
 
-        avatar_size = 180
+        avatar_size = 160 # Reduced from 180
         circle_x = (canvas_width - avatar_size) // 2
-        circle_y = 30
+        circle_y = 40 # Moved up slightly
         draw.ellipse([circle_x - 10, circle_y - 10, circle_x + avatar_size + 10, circle_y + avatar_size + 10], fill=circle_color)
 
         try:
@@ -236,27 +236,37 @@ class WelcomeSystem(commands.Cog):
         except Exception as e:
             print(f"❌ Error fetching avatar: {e}")
 
-        # 1. Draw Username (Example: "Vorthez")
+        # 1. Draw Username
         user_name = member.display_name
-        draw.text((canvas_width / 2, circle_y + avatar_size + 20), user_name, fill=name_color, font=font_large, anchor="mm")
+        draw.text((canvas_width / 2, circle_y + avatar_size + 12), user_name, fill=name_color, font=font_large, anchor="mm")
 
-        # 2. Draw Action Type (Example: "has been WARNED")
+        # 2. Draw Action Type (e.g. "has been WARNED")
         action_text = f"has been {action_type.upper()}"
-        draw.text((canvas_width / 2, circle_y + avatar_size + 75), action_text, fill=action_text_color, font=font_medium, anchor="mm")
+        draw.text((canvas_width / 2, circle_y + avatar_size + 52), action_text, fill=action_text_color, font=font_medium, anchor="mm")
 
-        # 3. Draw the Reason (Example: "Reason: test")
+        # 3. Draw the Reason (handling long text)
         if reason:
-            # Truncate reason if it's too long (max 60 chars)
+            # If reason is longer than 40 characters, split it into two lines to prevent clipping
             display_reason = reason
-            if len(display_reason) > 60: display_reason = display_reason[:57] + "..."
-            
-            reason_text = f"Reason: {display_reason}"
-            draw.text((canvas_width / 2, circle_y + avatar_size + 110), reason_text, fill=reason_text_color, font=font_small, anchor="mm")
+            if len(display_reason) > 40:
+                split_point = display_reason.rfind(' ', 0, 40)
+                if split_point == -1: split_point = 40
+                line1 = display_reason[:split_point]
+                line2 = display_reason[split_point:].strip()
+                
+                draw.text((canvas_width / 2, circle_y + avatar_size + 82), f"Reason: {line1}", fill=reason_text_color, font=font_small, anchor="mm")
+                draw.text((canvas_width / 2, circle_y + avatar_size + 104), line2, fill=reason_text_color, font=font_small, anchor="mm")
+            else:
+                draw.text((canvas_width / 2, circle_y + avatar_size + 82), f"Reason: {display_reason}", fill=reason_text_color, font=font_small, anchor="mm")
 
         # 4. If it's a WARNING, show the warning count
         if action_type.lower() == "warn" and warn_count > 0:
             count_text = f"Total Warnings: {warn_count}"
-            draw.text((canvas_width / 2, circle_y + avatar_size + 140), count_text, fill=reason_text_color, font=font_small, anchor="mm")
+            # If the reason was split, place the count lower. Otherwise, keep it standard.
+            if len(reason) > 40:
+                draw.text((canvas_width / 2, circle_y + avatar_size + 126), count_text, fill=reason_text_color, font=font_small, anchor="mm")
+            else:
+                draw.text((canvas_width / 2, circle_y + avatar_size + 104), count_text, fill=reason_text_color, font=font_small, anchor="mm")
 
         img_io = io.BytesIO()
         img.save(img_io, 'PNG')
