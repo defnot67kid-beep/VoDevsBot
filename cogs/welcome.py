@@ -10,6 +10,7 @@ from typing import Optional, List
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import aiohttp
 import io
+import emoji  # <--- Must pip install emoji
 
 class WelcomeSystem(commands.Cog):
     """Advanced Welcome System with Custom Image Card"""
@@ -96,6 +97,40 @@ class WelcomeSystem(commands.Cog):
         return roles
 
     # ============================================
+    # SMART TEXT DRAWER (Handles Emojis + Text)
+    # ============================================
+    def draw_text_with_emoji(self, draw, position, text, font_text, font_emoji, fill, anchor="mm"):
+        """Draws text while switching to emoji font when it detects an emoji."""
+        x, y = position
+        
+        # Parse text into a list of (text, is_emoji)
+        parts = []
+        for char in text:
+            if emoji.is_emoji(char):
+                parts.append((char, True))
+            else:
+                if parts and not parts[-1][1]:
+                    parts[-1] = (parts[-1][0] + char, False)
+                else:
+                    parts.append((char, False))
+        
+        current_x = x
+        
+        for part_text, is_em in parts:
+            if is_em:
+                # Use emoji font
+                bbox = draw.textbbox((0, 0), part_text, font=font_emoji)
+                width = bbox[2] - bbox[0]
+                draw.text((current_x, y), part_text, font=font_emoji, fill=fill, anchor="mm")
+                current_x += width - 5 # Slight spacing fix for emojis
+            else:
+                # Use roboto font
+                bbox = draw.textbbox((0, 0), part_text, font=font_text)
+                width = bbox[2] - bbox[0]
+                draw.text((current_x, y), part_text, font=font_text, fill=fill, anchor="mm")
+                current_x += width
+
+    # ============================================
     # BUILD WELCOME IMAGE CARD
     # ============================================
     async def build_welcome_card(self, member: discord.Member):
@@ -124,15 +159,26 @@ class WelcomeSystem(commands.Cog):
         text_color = self.hex_to_rgb(config.get("welcome_text_color", "#a1b0d6"))
 
         # -------------------------------------------------------------
-        # LOAD FONT FROM THE SAME FOLDER AS main.py
+        # LOAD FONTS FROM THE SAME FOLDER AS main.py
         # -------------------------------------------------------------
-        font_large = ImageFont.load_default()
-        font_medium = ImageFont.load_default()
-        font_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
-        if os.path.exists(font_path):
+        font_large_roboto = ImageFont.load_default()
+        font_medium_roboto = ImageFont.load_default()
+        font_large_emoji = ImageFont.load_default()
+        font_medium_emoji = ImageFont.load_default()
+
+        roboto_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
+        emoji_path = os.path.join(os.path.dirname(__file__), "..", "NotoColorEmoji.ttf")
+
+        if os.path.exists(roboto_path):
             try:
-                font_large = ImageFont.truetype(font_path, 46)
-                font_medium = ImageFont.truetype(font_path, 36)
+                font_large_roboto = ImageFont.truetype(roboto_path, 46)
+                font_medium_roboto = ImageFont.truetype(roboto_path, 36)
+            except:
+                pass
+        if os.path.exists(emoji_path):
+            try:
+                font_large_emoji = ImageFont.truetype(emoji_path, 46)
+                font_medium_emoji = ImageFont.truetype(emoji_path, 36)
             except:
                 pass
 
@@ -157,11 +203,10 @@ class WelcomeSystem(commands.Cog):
             print(f"❌ Error fetching avatar: {e}")
 
         user_name = member.display_name
-        username_text = user_name
-        draw.text((canvas_width / 2, circle_y + avatar_size + 20), username_text, fill=name_color, font=font_large, anchor="mm")
+        self.draw_text_with_emoji(draw, (canvas_width // 2, circle_y + avatar_size + 20), user_name, font_large_roboto, font_large_emoji, name_color)
 
         welcome_text = config.get("welcome_text", "Welcome to VoDevs!")
-        draw.text((canvas_width / 2, circle_y + avatar_size + 80), welcome_text, fill=text_color, font=font_medium, anchor="mm")
+        self.draw_text_with_emoji(draw, (canvas_width // 2, circle_y + avatar_size + 80), welcome_text, font_medium_roboto, font_medium_emoji, text_color)
 
         img_io = io.BytesIO()
         img.save(img_io, 'PNG')
@@ -202,17 +247,30 @@ class WelcomeSystem(commands.Cog):
         reason_text_color = self.hex_to_rgb("#ffaaaa") # Lighter red for reason
 
         # -------------------------------------------------------------
-        # LOAD FONT FROM THE SAME FOLDER AS main.py
+        # LOAD FONTS FROM THE SAME FOLDER AS main.py
         # -------------------------------------------------------------
-        font_large = ImageFont.load_default()
-        font_medium = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-        font_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
-        if os.path.exists(font_path):
+        font_large_roboto = ImageFont.load_default()
+        font_medium_roboto = ImageFont.load_default()
+        font_small_roboto = ImageFont.load_default()
+        font_large_emoji = ImageFont.load_default()
+        font_medium_emoji = ImageFont.load_default()
+        font_small_emoji = ImageFont.load_default()
+
+        roboto_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
+        emoji_path = os.path.join(os.path.dirname(__file__), "..", "NotoColorEmoji.ttf")
+
+        if os.path.exists(roboto_path):
             try:
-                font_large = ImageFont.truetype(font_path, 40)
-                font_medium = ImageFont.truetype(font_path, 26)
-                font_small = ImageFont.truetype(font_path, 20)
+                font_large_roboto = ImageFont.truetype(roboto_path, 40)
+                font_medium_roboto = ImageFont.truetype(roboto_path, 26)
+                font_small_roboto = ImageFont.truetype(roboto_path, 20)
+            except:
+                pass
+        if os.path.exists(emoji_path):
+            try:
+                font_large_emoji = ImageFont.truetype(emoji_path, 40)
+                font_medium_emoji = ImageFont.truetype(emoji_path, 26)
+                font_small_emoji = ImageFont.truetype(emoji_path, 20)
             except:
                 pass
 
@@ -238,11 +296,11 @@ class WelcomeSystem(commands.Cog):
 
         # 1. Draw Username
         user_name = member.display_name
-        draw.text((canvas_width / 2, circle_y + avatar_size + 12), user_name, fill=name_color, font=font_large, anchor="mm")
+        self.draw_text_with_emoji(draw, (canvas_width // 2, circle_y + avatar_size + 12), user_name, font_large_roboto, font_large_emoji, name_color)
 
         # 2. Draw Action Type (e.g. "has been WARNED")
         action_text = f"has been {action_type.upper()}"
-        draw.text((canvas_width / 2, circle_y + avatar_size + 52), action_text, fill=action_text_color, font=font_medium, anchor="mm")
+        self.draw_text_with_emoji(draw, (canvas_width // 2, circle_y + avatar_size + 52), action_text, font_medium_roboto, font_medium_emoji, action_text_color)
 
         # 3. Draw the Reason (handling long text)
         if reason:
@@ -253,18 +311,18 @@ class WelcomeSystem(commands.Cog):
                 line1 = display_reason[:split_point]
                 line2 = display_reason[split_point:].strip()
                 
-                draw.text((canvas_width / 2, circle_y + avatar_size + 82), f"Reason: {line1}", fill=reason_text_color, font=font_small, anchor="mm")
-                draw.text((canvas_width / 2, circle_y + avatar_size + 104), line2, fill=reason_text_color, font=font_small, anchor="mm")
+                self.draw_text_with_emoji(draw, (canvas_width // 2, circle_y + avatar_size + 82), f"Reason: {line1}", font_small_roboto, font_small_emoji, reason_text_color)
+                self.draw_text_with_emoji(draw, (canvas_width // 2, circle_y + avatar_size + 104), line2, font_small_roboto, font_small_emoji, reason_text_color)
             else:
-                draw.text((canvas_width / 2, circle_y + avatar_size + 82), f"Reason: {display_reason}", fill=reason_text_color, font=font_small, anchor="mm")
+                self.draw_text_with_emoji(draw, (canvas_width // 2, circle_y + avatar_size + 82), f"Reason: {display_reason}", font_small_roboto, font_small_emoji, reason_text_color)
 
         # 4. If it's a WARNING, show the warning count
         if action_type.lower() == "warn" and warn_count > 0:
             count_text = f"Total Warnings: {warn_count}"
             if len(reason) > 40:
-                draw.text((canvas_width / 2, circle_y + avatar_size + 126), count_text, fill=reason_text_color, font=font_small, anchor="mm")
+                self.draw_text_with_emoji(draw, (canvas_width // 2, circle_y + avatar_size + 126), count_text, font_small_roboto, font_small_emoji, reason_text_color)
             else:
-                draw.text((canvas_width / 2, circle_y + avatar_size + 104), count_text, fill=reason_text_color, font=font_small, anchor="mm")
+                self.draw_text_with_emoji(draw, (canvas_width // 2, circle_y + avatar_size + 104), count_text, font_small_roboto, font_small_emoji, reason_text_color)
 
         img_io = io.BytesIO()
         img.save(img_io, 'PNG')
