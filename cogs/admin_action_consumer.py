@@ -15,6 +15,7 @@ admin_actions_collection = db["admin_actions"]
 reaction_roles_collection = db["reaction_roles"]
 warning_users = db["warning_users"]
 server_configs = db["server_configs"]
+ban_list_cache = db["ban_list_cache"]
 
 # ==========================================
 # HARDCODED CHANNELS & IMMUNITY CONFIG
@@ -225,6 +226,28 @@ class AdminActionConsumer(commands.Cog):
                     welcome_cog.save_data()
                     print(f"✅ [BOT] Welcome config saved for guild {guild.name}")
 
+            elif action['type'] == 'get_ban_list':
+                print(f"📋 [BOT] Fetching ban list for guild {guild.name}")
+                try:
+                    ban_list = []
+                    async for ban_entry in guild.bans():
+                        ban_list.append({
+                            "user_id": str(ban_entry.user.id),
+                            "username": ban_entry.user.name,
+                            "reason": ban_entry.reason
+                        })
+                    # Save to MongoDB cache for the dashboard
+                    ban_list_cache.update_one(
+                        {"guild_id": str(guild.id)},
+                        {"$set": {"bans": ban_list}},
+                        upsert=True
+                    )
+                    print(f"✅ [BOT] Cached {len(ban_list)} banned users.")
+                except discord.Forbidden:
+                    print(f"❌ [BOT] Missing permissions to view bans.")
+                except Exception as e:
+                    print(f"❌ [BOT] Error fetching ban list: {e}")
+
             admin_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
 
         except Exception as e:
@@ -315,7 +338,6 @@ class AdminActionConsumer(commands.Cog):
             try:
                 warn_channel = guild.get_channel(ACTION_IMAGE_CHANNEL_ID)
                 if warn_channel and isinstance(warn_channel, discord.TextChannel):
-                    # Use the new universal card
                     file = await welcome_cog.build_action_card(guild, member, "warn", reason, moderator_name, warn_count)
                     await warn_channel.send(file=file)
             except Exception as e:
