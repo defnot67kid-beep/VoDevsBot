@@ -210,15 +210,15 @@ class WelcomeSystem(commands.Cog):
         font_path = os.path.join(os.path.dirname(__file__), "..", "Roboto_Condensed-SemiBoldItalic.ttf")
         if os.path.exists(font_path):
             try:
-                font_large = ImageFont.truetype(font_path, 40) # Reduced from 46
-                font_medium = ImageFont.truetype(font_path, 26) # Reduced from 30
-                font_small = ImageFont.truetype(font_path, 20)  # Reduced from 22
+                font_large = ImageFont.truetype(font_path, 40)
+                font_medium = ImageFont.truetype(font_path, 26)
+                font_small = ImageFont.truetype(font_path, 20)
             except:
                 pass
 
-        avatar_size = 160 # Reduced from 180
+        avatar_size = 160
         circle_x = (canvas_width - avatar_size) // 2
-        circle_y = 40 # Moved up slightly
+        circle_y = 40
         draw.ellipse([circle_x - 10, circle_y - 10, circle_x + avatar_size + 10, circle_y + avatar_size + 10], fill=circle_color)
 
         try:
@@ -246,7 +246,6 @@ class WelcomeSystem(commands.Cog):
 
         # 3. Draw the Reason (handling long text)
         if reason:
-            # If reason is longer than 40 characters, split it into two lines to prevent clipping
             display_reason = reason
             if len(display_reason) > 40:
                 split_point = display_reason.rfind(' ', 0, 40)
@@ -262,7 +261,6 @@ class WelcomeSystem(commands.Cog):
         # 4. If it's a WARNING, show the warning count
         if action_type.lower() == "warn" and warn_count > 0:
             count_text = f"Total Warnings: {warn_count}"
-            # If the reason was split, place the count lower. Otherwise, keep it standard.
             if len(reason) > 40:
                 draw.text((canvas_width / 2, circle_y + avatar_size + 126), count_text, fill=reason_text_color, font=font_small, anchor="mm")
             else:
